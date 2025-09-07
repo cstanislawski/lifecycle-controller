@@ -1,15 +1,6 @@
 name: Helm E2E Tests
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'charts/**'
-      - 'test/e2e-helm/**'
-      - 'Makefile'
-      - 'go.mod'
-      - 'go.sum'
   pull_request:
     paths:
       - 'charts/**'
