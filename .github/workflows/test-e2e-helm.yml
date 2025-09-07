@@ -1,0 +1,56 @@
+name: Helm E2E Tests
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'charts/**'
+      - 'test/e2e-helm/**'
+      - 'Makefile'
+      - 'go.mod'
+      - 'go.sum'
+  pull_request:
+    paths:
+      - 'charts/**'
+      - 'test/e2e-helm/**'
+      - 'Makefile'
+      - 'go.mod'
+      - 'go.sum'
+
+env:
+  HELM_CHART_PATH: charts/lifecycle-controller
+
+jobs:
+  test-e2e-helm:
+    name: Run Helm E2E on Ubuntu
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Get helm version
+        run: |
+          cd ${{ env.HELM_CHART_PATH }}
+          helm version --template '{{.Version}}' >> $GITHUB_OUTPUT
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ steps.get-helm-version.outputs.helm-version }}
+
+      - name: Install the latest version of kind
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+
+      - name: Running Helm Test e2e
+        run: |
+          go mod tidy
+          make test-e2e-helm

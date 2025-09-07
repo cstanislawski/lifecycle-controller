@@ -1,0 +1,16 @@
+apiVersion: v2
+name: lifecycle-controller
+description: A Kubernetes controller to manage the lifecycle of standard resources through time-based annotations.
+type: application
+version: 0.1.0
+appVersion: "v0.0.1"
+keywords:
+  - kubernetes
+  - controller
+  - operator
+  - lifecycle
+home: https://github.com/cstanislawski/lifecycle-controller
+sources:
+  - https://github.com/cstanislawski/lifecycle-controller
+maintainers:
+  - name: cstanislawski
