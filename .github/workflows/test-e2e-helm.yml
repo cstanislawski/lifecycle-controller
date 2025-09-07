@@ -18,7 +18,7 @@ env:
 
 jobs:
   test-e2e-helm:
-    name: Run Helm E2E on Ubuntu
+    name: Run on Ubuntu
     runs-on: ubuntu-latest
     steps:
       - name: Clone the code

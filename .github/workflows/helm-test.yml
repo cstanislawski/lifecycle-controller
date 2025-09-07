@@ -15,7 +15,7 @@ env:
 
 jobs:
   test-lint:
-    name: Lint and Template Helm Chart
+    name: Run on Ubuntu
     runs-on: ubuntu-latest
     steps:
       - name: Clone the code
