@@ -6,6 +6,10 @@ on:
       - 'charts/**'
       - 'Makefile'
 
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   HELM_CHART_PATH: charts/lifecycle-controller
 
