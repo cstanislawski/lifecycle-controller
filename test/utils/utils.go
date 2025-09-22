@@ -244,7 +244,11 @@ func GetEvents(g Gomega, namespace, resourceName, resourceKind string) []corev1.
 func ApplyYAML(yamlContent string) {
 	tmpFile, err := os.CreateTemp("", "e2e-*.yaml")
 	Expect(err).NotTo(HaveOccurred())
-	defer os.Remove(tmpFile.Name())
+	defer func() {
+		if err := os.Remove(tmpFile.Name()); err != nil {
+			warnError(fmt.Errorf("failed to remove temporary file %s: %w", tmpFile.Name(), err))
+		}
+	}()
 
 	_, err = tmpFile.WriteString(yamlContent)
 	Expect(err).NotTo(HaveOccurred())

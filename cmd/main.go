@@ -46,7 +46,6 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
-	// --- VARIABLE ADDED ---
 	var leaderElectionID string
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
@@ -55,8 +54,8 @@ func main() {
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
-	// --- FLAG DEFINITION ADDED ---
-	flag.StringVar(&leaderElectionID, "leader-election-id", "9a46ead0.lifecycle.cezary.dev", "The name of the resource that will be used for leader election.")
+	flag.StringVar(&leaderElectionID, "leader-election-id", "9a46ead0.lifecycle.cezary.dev",
+		"The name of the resource that will be used for leader election.")
 	flag.BoolVar(&secureMetrics, "metrics-secure", true,
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
 	flag.StringVar(&webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")

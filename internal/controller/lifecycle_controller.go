@@ -26,17 +26,18 @@ import (
 
 // Constants for annotations
 const (
-	TimezoneAnnotation       = "lifecycle.cezary.dev/timezone"
-	DryRunAnnotation         = "lifecycle.cezary.dev/dry-run"
-	ReferencePointAnnotation = "lifecycle.cezary.dev/reference-point"
-	DeleteAtAnnotation       = "lifecycle.cezary.dev/delete-at"
-	DeleteAfterAnnotation    = "lifecycle.cezary.dev/delete-after"
-	RestartAtAnnotation      = "lifecycle.cezary.dev/restart-at"
-	RestartAfterAnnotation   = "lifecycle.cezary.dev/restart-after"
-	RestartCronAnnotation    = "lifecycle.cezary.dev/restart-cron"
-	RestartEveryAnnotation   = "lifecycle.cezary.dev/restart-every"
-	LastRestartTimestamp     = "lifecycle.cezary.dev/last-restart-timestamp"
-	RestartedAtTemplate      = "lifecycle.cezary.dev/restartedAt"
+	TimezoneAnnotation              = "lifecycle.cezary.dev/timezone"
+	DryRunAnnotation                = "lifecycle.cezary.dev/dry-run"
+	ReferencePointAnnotation        = "lifecycle.cezary.dev/reference-point"
+	DeleteAtAnnotation              = "lifecycle.cezary.dev/delete-at"
+	DeleteAfterAnnotation           = "lifecycle.cezary.dev/delete-after"
+	RestartAtAnnotation             = "lifecycle.cezary.dev/restart-at"
+	RestartAfterAnnotation          = "lifecycle.cezary.dev/restart-after"
+	RestartCronAnnotation           = "lifecycle.cezary.dev/restart-cron"
+	RestartEveryAnnotation          = "lifecycle.cezary.dev/restart-every"
+	LastRestartTimestamp            = "lifecycle.cezary.dev/last-restart-timestamp"
+	RestartedAtTemplate             = "lifecycle.cezary.dev/restartedAt"
+	ReferencePointCreationTimestamp = "creationTimestamp"
 )
 
 // LifecycleReconciler reconciles objects with lifecycle annotations.
@@ -95,8 +96,8 @@ func (r *LifecycleReconciler) getReferenceTime(obj client.Object, logger logr.Lo
 	referencePoint := annotations[ReferencePointAnnotation]
 
 	switch referencePoint {
-	case "creationTimestamp":
-		refTime := obj.GetCreationTimestamp().Time.UTC()
+	case ReferencePointCreationTimestamp:
+		refTime := obj.GetCreationTimestamp().UTC()
 		logger.Info("Using creationTimestamp as reference point", "timestamp", refTime)
 		return refTime
 	case "applyTimestamp", "": // Default behavior
@@ -185,7 +186,7 @@ func (r *LifecycleReconciler) handleDeletion(ctx context.Context, obj *unstructu
 	annotations := obj.GetAnnotations()
 
 	if deleteAfterStr := annotations[DeleteAfterAnnotation]; deleteAfterStr != "" {
-		if annotations[ReferencePointAnnotation] == "creationTimestamp" && annotations[DeleteAtAnnotation] != "" {
+		if annotations[ReferencePointAnnotation] == ReferencePointCreationTimestamp && annotations[DeleteAtAnnotation] != "" {
 			logger.Info("Ignoring delete-after because delete-at is already set with creationTimestamp reference point")
 			delete(annotations, DeleteAfterAnnotation)
 			obj.SetAnnotations(annotations)
@@ -268,7 +269,7 @@ func (r *LifecycleReconciler) handleRestart(ctx context.Context, obj *unstructur
 	now := time.Now()
 
 	if restartAfterStr := annotations[RestartAfterAnnotation]; restartAfterStr != "" {
-		if annotations[ReferencePointAnnotation] == "creationTimestamp" && annotations[RestartAtAnnotation] != "" {
+		if annotations[ReferencePointAnnotation] == ReferencePointCreationTimestamp && annotations[RestartAtAnnotation] != "" {
 			logger.Info("Ignoring restart-after because restart-at is already set with creationTimestamp reference point")
 			delete(annotations, RestartAfterAnnotation)
 			obj.SetAnnotations(annotations)
