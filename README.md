@@ -139,12 +139,3 @@ helm install lifecycle-controller lifecycle-controller/lifecycle-controller \
   --namespace lifecycle-controller-system \
   --create-namespace
 ```
-
-or with a custom values file:
-
-```sh
-helm install lifecycle-controller ./charts/lifecycle-controller \
-  --namespace lifecycle-controller-system \
-  --create-namespace \
-  -f custom.yaml
-```
