@@ -1,6 +1,6 @@
 # lifecycle-controller
 
-A Kubernetes controller to manage the lifecycle of standard Kubernetes resources (like Deployments, StatefulSets, and Namespaces) through simple, time-based annotations.
+A Kubernetes controller to manage the lifecycle of any Kubernetes resource, namespaced or not, through simple, time-based annotations.
 
 This controller allows you to automate common operational tasks such as cleaning up temporary resources or scheduling periodic application restarts without needing to create complex CronJobs or custom wrapper objects.
 
@@ -78,12 +78,12 @@ The controller's behavior is configured entirely through annotations.
   - `lifecycle.cezary.dev/delete-after`: Relative TTL (e.g., `5m`, `1h`, `3d`). The controller processes this annotation by calculating an absolute deletion time based on the time it first notices the annotation. It then adds a `lifecycle.cezary.dev/delete-at` annotation to the resource with this calculated time. To prevent re-calculation and make the state explicit, the original `lifecycle.cezary.dev/delete-after` annotation is then removed. **Supports `s`, `m`, `h`, and `d` (days).**
   - `lifecycle.cezary.dev/dry-run: "true"`: A per-resource annotation that makes the controller log the actions it *would* take without executing them. This can also be set via a global flag on the controller.
 
-- **Only for pod-spawning resources (Deployments, StatefulSets, etc.):**
+- **Only for pod-spawning resources (Deployments, StatefulSets, DaemonSets, etc.):**
   - `lifecycle.cezary.dev/restart-at`: Performs a one-time rolling restart at a specific date and time.
   - `lifecycle.cezary.dev/restart-after`: Performs a one-time rolling restart after a relative duration (e.g., `1h`). The controller converts this to an absolute `restart-at` annotation. Supports `s`, `m`, `h`, and `d` (days).
   - `lifecycle.cezary.dev/restart-every`: Performs a rolling restart on a recurring, relative basis (e.g., `7d` to restart weekly). Supports `s`, `m`, `h`, and `d` (days).
   - `lifecycle.cezary.dev/restart-cron`: Performs a rolling restart based on a cron expression (e.g., `"0 3 * * *"` for daily at 3 AM).
-  - A resource is considered pod-spawning if it has a `spec.template.metadata.annotations` field, which is a pattern that tools like `kustomize`, or controllers like `Argo Rollouts` use to determine if the resource is a pod-spawning resource.
+  - A resource is considered pod-spawning if it has a `spec.template.metadata.annotations` field. The restart mechanism works by patching this field, which is the standard Kubernetes pattern for triggering a rolling update.
 
 - **Restart Mechanism**
   - **Triggering a Restart** - To initiate a rolling restart, the controller injects a `lifecycle.cezary.dev/restartedAt: "<timestamp>"` annotation into the resource's`spec.template.metadata.annotations`. This is the standard mechanism that causes Kubernetes to detect a change in the pod template and trigger a rollout.
@@ -127,6 +127,12 @@ For time-critical operations or to set a fixed expiration that does not change o
 
 - A standalone container that you can configure to run in your own environment
 - A Helm chart for easy deployment into a Kubernetes cluster
+
+### A Note on Permissions (RBAC)
+
+To dynamically manage any resource type, the controller uses the Kubernetes Discovery API at startup to find all available resources. This requires a `ClusterRole` with wildcard (`*`) permissions for `resources` and `apiGroups` for the verbs `get`, `list`, `watch`, `update`, `patch`, and `delete`.
+
+While these permissions are broad, the controller's logic provides a critical safety mechanism: it will only ever take action on a resource that is explicitly annotated with one of the `lifecycle.cezary.dev/...` annotations. It will never modify or delete any other resource in your cluster.
 
 ### Installation with Helm
 

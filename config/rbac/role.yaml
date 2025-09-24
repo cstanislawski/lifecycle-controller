@@ -7,43 +7,14 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - configmaps
-  - namespaces
-  - pods
-  - secrets
-  - services
-  verbs:
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - ""
-  resources:
   - events
   verbs:
   - create
   - patch
 - apiGroups:
-  - apps
+  - '*'
   resources:
-  - daemonsets
-  - deployments
-  - statefulsets
-  verbs:
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - batch
-  resources:
-  - cronjobs
-  - jobs
+  - '*'
   verbs:
   - delete
   - get

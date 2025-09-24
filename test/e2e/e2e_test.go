@@ -15,7 +15,6 @@ import (
 	"github.com/cstanislawski/lifecycle-controller/test/utils"
 )
 
-// namespace where the project is deployed in
 const managerNamespace = "lifecycle-controller-system"
 
 var _ = Describe("Lifecycle Controller E2E", Ordered, func() {
@@ -86,7 +85,6 @@ var _ = Describe("Lifecycle Controller E2E", Ordered, func() {
 		It("should delete a Deployment after the 'delete-after' duration", func() {
 			By("creating a Deployment with a short delete-after annotation")
 			deploymentName := "e2e-delete-after"
-			// Using a short duration for quick test execution
 			deploymentYAML := fmt.Sprintf(`
 apiVersion: apps/v1
 kind: Deployment
@@ -176,7 +174,6 @@ spec:
 				newDeleteAt, err := time.Parse(time.RFC3339, newDeleteAtStr)
 				g.Expect(err).NotTo(HaveOccurred())
 
-				// The new time should be after the original time.
 				g.Expect(newDeleteAt.After(firstDeleteAt)).To(BeTrue(), "The new deletion time should be later than the original")
 			}).WithTimeout(time.Minute).WithPolling(time.Second).Should(Succeed())
 		})
@@ -552,7 +549,6 @@ metadata:
 `, namespaceName, deleteAtTime)
 			utils.ApplyYAML(namespaceYAML)
 
-			// Create a resource inside the namespace
 			configMapYAML := fmt.Sprintf(`
 apiVersion: v1
 kind: ConfigMap
@@ -609,11 +605,16 @@ spec:
 			Eventually(func(g Gomega) {
 				events := utils.GetEvents(g, "default", deploymentName, "Deployment")
 				g.Expect(events).NotTo(BeEmpty())
-				g.Expect(events[0].Reason).To(Equal("ConflictingAnnotations"))
-				g.Expect(events[0].Type).To(Equal("Warning"))
+				foundEvent := false
+				for _, event := range events {
+					if event.Reason == "ConflictingAnnotations" && event.Type == "Warning" {
+						foundEvent = true
+						break
+					}
+				}
+				g.Expect(foundEvent).To(BeTrue(), "expected to find a ConflictingAnnotations warning event")
 			}).WithTimeout(time.Minute).WithPolling(time.Second).Should(Succeed())
 
-			// Cleanup
 			cmd := exec.Command("kubectl", "delete", "deployment", deploymentName, "-n", "default")
 			_, _ = utils.Run(cmd)
 		})
@@ -662,6 +663,104 @@ spec:
 			// Cleanup
 			cmd := exec.Command("kubectl", "delete", "deployment", deploymentName, "-n", "default")
 			_, _ = utils.Run(cmd)
+		})
+	})
+
+	Context("Dynamic CRD Handling", func() {
+		const testNamespace = "lifecycle-e2e-crd"
+		const crdName = "lifecyclee2etests.testing.lifecycle.cezary.dev"
+		const crdYAML = `
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: ` + crdName + `
+spec:
+  group: testing.lifecycle.cezary.dev
+  names:
+    kind: LifecycleE2ETest
+    listKind: LifecycleE2ETestList
+    plural: lifecyclee2etests
+    singular: lifecyclee2etest
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+          status:
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+`
+
+		BeforeAll(func() {
+			By("creating the test CRD")
+			utils.ApplyYAML(crdYAML)
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "crd", crdName)
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+			}).WithTimeout(time.Minute).WithPolling(time.Second).Should(Succeed())
+
+			By("restarting the controller to discover the new CRD")
+			cmd := exec.Command("kubectl", "delete", "pod", "-n", managerNamespace, "-l", "control-plane=controller-manager")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func(g Gomega) {
+				cmd = exec.Command("kubectl", "wait", "pod", "-n", managerNamespace, "-l", "control-plane=controller-manager", "--for=condition=Ready", "--timeout=2m")
+				_, err = utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+			}).WithTimeout(3 * time.Minute).WithPolling(time.Second).Should(Succeed())
+		})
+
+		AfterAll(func() {
+			By("deleting the test CRD")
+			cmd := exec.Command("kubectl", "delete", "crd", crdName, "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+		})
+
+		BeforeEach(func() {
+			By("creating CRD test namespace")
+			cmd := exec.Command("kubectl", "create", "ns", testNamespace)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		AfterEach(func() {
+			By("deleting CRD test namespace")
+			cmd := exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+		})
+
+		It("should delete a custom resource instance after the 'delete-after' duration", func() {
+			crName := "e2e-cr-delete-after"
+			crYAML := fmt.Sprintf(`
+apiVersion: testing.lifecycle.cezary.dev/v1alpha1
+kind: LifecycleE2ETest
+metadata:
+  name: %s
+  namespace: %s
+  annotations:
+    lifecycle.cezary.dev/delete-after: "15s"
+spec:
+  foo: bar
+`, crName, testNamespace)
+			utils.ApplyYAML(crYAML)
+
+			By("verifying the custom resource is eventually deleted")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "lifecyclee2etest", crName, "-n", testNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("not found"))
+			}).WithTimeout(40 * time.Second).WithPolling(2 * time.Second).Should(Succeed())
 		})
 	})
 })
