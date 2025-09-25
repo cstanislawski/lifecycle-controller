@@ -39,7 +39,7 @@ dockers:
     goarch: amd64
     image_templates:
       - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:{{ .Version }}-amd64"
-    dockerfile: Dockerfile
+    dockerfile: Dockerfile.release
     build_flag_templates:
       - "--platform=linux/amd64"
     use: buildx
@@ -50,7 +50,7 @@ dockers:
     goarch: arm64
     image_templates:
       - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:{{ .Version }}-arm64"
-    dockerfile: Dockerfile
+    dockerfile: Dockerfile.release
     build_flag_templates:
       - "--platform=linux/arm64"
     use: buildx
