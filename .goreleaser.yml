@@ -2,11 +2,13 @@
 # Visit https://goreleaser.com/customization/ for more options
 version: 2
 
+project_name: lifecycle-controller
+
 release:
   prerelease: auto
 
 builds:
-  - id: lifecycle-controller
+  - id: manager-build
     main: ./cmd/main.go
     binary: manager
     env:
@@ -20,28 +22,50 @@ builds:
       - arm64
 
 archives:
-  - id: lifecycle-controller-archives
+  - id: manager-archives
     builds:
-      - lifecycle-controller
+      - manager-build
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
     format: tar.gz
     files:
       - LICENSE
       - README.md
 
 dockers:
-  - image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:{{ .Version }}"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:latest"
+  - goos: linux
+    goarch: amd64
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:{{ .Version }}-amd64"
     dockerfile: Dockerfile
     build_flag_templates:
       - "--platform=linux/amd64"
+    use: buildx
+    ids:
+      - manager-build
+
+  - goos: linux
+    goarch: arm64
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:{{ .Version }}-arm64"
+    dockerfile: Dockerfile
+    build_flag_templates:
       - "--platform=linux/arm64"
     use: buildx
-    goos: linux
-    goarch: amd64
     ids:
-      - lifecycle-controller
+      - manager-build
+
+docker_manifests:
+  - name_template: "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:{{ .Version }}-amd64"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:latest"
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:{{ .Version }}-amd64"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:{{ .Version }}-arm64"
 
 checksum:
   name_template: "checksums.txt"
