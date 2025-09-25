@@ -1,14 +1,14 @@
 name: Verify Helm Chart
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   pull_request:
     paths:
       - 'charts/**'
       - 'Makefile'
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 env:
   HELM_CHART_PATH: charts/lifecycle-controller

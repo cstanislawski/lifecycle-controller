@@ -1,11 +1,24 @@
 name: E2E Tests
 
-on:
-  pull_request:
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+on:
+  pull_request:
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'internal/**'
+      - 'cmd/**'
+      - 'api/**'
+      - 'Dockerfile'
+      - 'Makefile'
+      - 'config/**'
+      - 'test/e2e/**'
+      - 'test/utils/**'
+      - '.github/workflows/test-e2e.yml'
 
 jobs:
   test-e2e:
