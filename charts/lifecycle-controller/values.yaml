@@ -1,0 +1,82 @@
+# Default values for lifecycle-controller.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/cstanislawski/lifecycle-controller
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+# Create the necessary ClusterRole, ClusterRoleBinding, Role, and RoleBinding
+rbac:
+  create: true
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Controller-specific command line arguments
+controllerManager:
+  leaderElection:
+    enabled: true
+    resourceName: ""
+  healthProbeBindAddress: ":8081"
+  # enableHTTP2 can be set to true if needed, but defaults to false for security.
+  enableHTTP2: false
+
+metrics:
+  # Enable the metrics endpoint
+  enabled: true
+  bindAddress: ":8443"
+  secure: true # Corresponds to --metrics-secure flag
+  service:
+    # enable the metrics service
+    enabled: true
+    type: ClusterIP
+    port: 8443
+    annotations: {}
+      # prometheus.io/scrape: "true"
+      # prometheus.io/port: "8443"
+  serviceMonitor:
+    # If true, a ServiceMonitor CR will be created
+    enabled: false
+    # namespace where ServiceMonitor resource should be installed
+    namespace: ""
+    # additional labels for the ServiceMonitor
+    additionalLabels: {}
+    insecureSkipVerify: true
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

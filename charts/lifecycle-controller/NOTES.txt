@@ -1,0 +1,13 @@
+lifecycle-controller has been deployed.
+
+To verify that the controller is running, check the pod status:
+$ kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+
+You can now manage your Kubernetes resources by adding annotations.
+
+EXAMPLE:
+To delete a Deployment named 'my-app' in the 'default' namespace after 10 minutes, apply the following annotation:
+
+kubectl annotate deployment my-app -n default lifecycle.cezary.dev/delete-after="10m"
+
+The controller will see this annotation, convert it to a fixed 'delete-at' timestamp, and remove the resource when the time comes.

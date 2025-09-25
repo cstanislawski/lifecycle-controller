@@ -1,0 +1,23 @@
+# Patterns to ignore when building packages.
+# This supports shell glob matching, relative path matching, and
+# negation (preceded by !). Onlypattern Match is supported.
+#
+# LINTING:
+#   These files are not linted by default. You can force linting
+#   of these files by using the '--strict' flag.
+
+# Chart sources
+*.tgz
+*.swp
+
+# Source control
+.git/
+.gitignore
+.gitmodules
+.gitattributes
+
+# IDEs
+.project
+.idea/
+*.tmproj
+.vscode/
