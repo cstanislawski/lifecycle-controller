@@ -6,8 +6,8 @@ concurrency:
 
 on:
   push:
-    tags:
-      - 'lifecycle-controller-[0-9]+.[0-9]+.[0-9]+'
+    branches:
+      - main
 
 env:
   HELM_CHART_PATH: charts/lifecycle-controller
@@ -61,5 +61,5 @@ jobs:
             if [ -z "${pkg:-}" ]; then
               break
             fi
-            helm push "${pkg}" "oci://ghcr.io/${GITHUB_REPOSITORY_OWNER}/helm-charts"
+            helm push "${pkg}" "oci://ghcr.io/${GITHUB_REPOSITORY_OWNER}/lifecycle-controller"
           done

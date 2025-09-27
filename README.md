@@ -142,6 +142,6 @@ You can install the controller directly from the Helm repository:
 helm repo add lifecycle-controller https://cstanislawski.github.io/lifecycle-controller
 helm repo update
 helm install lifecycle-controller lifecycle-controller/lifecycle-controller \
-  --namespace lifecycle-controller-system \
+  --namespace lifecycle-controller \
   --create-namespace
 ```
