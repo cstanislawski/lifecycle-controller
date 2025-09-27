@@ -6,8 +6,8 @@ concurrency:
 
 on:
   push:
-    tags:
-      - 'lifecycle-controller-[0-9]+.[0-9]+.[0-9]+'
+    branches:
+      - main
 
 env:
   HELM_CHART_PATH: charts/lifecycle-controller
