@@ -277,9 +277,12 @@ func GetDeployment(name, namespace string, g Gomega) *appsv1.Deployment {
 func GetPodForRelease(g Gomega, releaseName, namespace string) *corev1.Pod {
 	// Filter out pods that are terminating (have a deletionTimestamp)
 	// This prevents race conditions where we pick up a dying pod from a previous test run
+	goTemplate := "go-template={{ range .items }}{{ if not .metadata.deletionTimestamp }}" +
+		"{{ .metadata.name }}{{ \"\\n\" }}{{ end }}{{ end }}"
+
 	cmd := exec.Command("kubectl", "get", "pods",
 		"-l", fmt.Sprintf("app.kubernetes.io/instance=%s", releaseName),
-		"-o", "go-template={{ range .items }}{{ if not .metadata.deletionTimestamp }}{{ .metadata.name }}{{ \"\\n\" }}{{ end }}{{ end }}",
+		"-o", goTemplate,
 		"-n", namespace,
 	)
 	podOutput, err := Run(cmd)
