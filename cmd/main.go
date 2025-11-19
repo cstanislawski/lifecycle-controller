@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"strings"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -36,6 +37,18 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
+// arrayFlags is a custom flag type to allow repeated flags
+type arrayFlags []string
+
+func (i *arrayFlags) String() string {
+	return strings.Join(*i, ",")
+}
+
+func (i *arrayFlags) Set(value string) error {
+	*i = append(*i, value)
+	return nil
+}
+
 // nolint:gocyclo
 func main() {
 	var metricsAddr string
@@ -47,6 +60,8 @@ func main() {
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
 	var leaderElectionID string
+	var watchResources, ignoreResources arrayFlags
+	var watchNamespaces, ignoreNamespaces arrayFlags
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -67,6 +82,13 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.Var(&watchResources, "watch-resource", "Glob pattern for resources to watch "+
+		"(e.g. 'deployments.apps', 'pods', '*.k8s.io'). Can be repeated.")
+	flag.Var(&ignoreResources, "ignore-resource", "Glob pattern for resources to ignore. Can be repeated.")
+	flag.Var(&watchNamespaces, "watch-namespace", "Glob pattern for namespaces to watch "+
+		"(e.g. 'default', 'dev-*'). Can be repeated.")
+	flag.Var(&ignoreNamespaces, "ignore-namespace", "Glob pattern for namespaces to ignore. Can be repeated.")
+
 	opts := zap.Options{
 		Development: true,
 	}
@@ -166,9 +188,25 @@ func main() {
 		os.Exit(1)
 	}
 
+	scopeConfig := controller.ScopeConfig{
+		WatchResources:   watchResources,
+		IgnoreResources:  ignoreResources,
+		WatchNamespaces:  watchNamespaces,
+		IgnoreNamespaces: ignoreNamespaces,
+	}
+
+	setupLog.Info("Starting with scope configuration",
+		"watchResources", watchResources,
+		"ignoreResources", ignoreResources,
+		"watchNamespaces", watchNamespaces,
+		"ignoreNamespaces", ignoreNamespaces,
+	)
+
 	if err := (&controller.LifecycleReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Config:   scopeConfig,
+		Recorder: mgr.GetEventRecorderFor("lifecycle-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Lifecycle")
 		os.Exit(1)

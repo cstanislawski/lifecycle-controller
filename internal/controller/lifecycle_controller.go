@@ -54,6 +54,7 @@ type LifecycleReconciler struct {
 	Scheme         *runtime.Scheme
 	Recorder       record.EventRecorder
 	KnownResources []ResourceScope
+	Config         ScopeConfig
 }
 
 // +kubebuilder:rbac:groups=*,resources=*,verbs=get;list;watch;delete;update;patch
@@ -490,10 +491,20 @@ func (r *LifecycleReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	controllerBuilder := ctrl.NewControllerManagedBy(mgr).Named("lifecycle")
 	annotationPredicate := predicate.AnnotationChangedPredicate{}
+	// Pass a closure to allow dynamic config updates during tests
+	namespacePredicate := NamespaceScopePredicate(func() ScopeConfig {
+		return r.Config
+	})
 	setupLog := mgr.GetLogger().WithName("lifecycle-setup")
 
 	// Dynamically watch all resources that support the necessary verbs
 	for _, apiResourceList := range apiResourceLists {
+		gv, err := schema.ParseGroupVersion(apiResourceList.GroupVersion)
+		if err != nil {
+			setupLog.Error(err, "failed to parse group version", "groupVersion", apiResourceList.GroupVersion)
+			continue
+		}
+
 		for _, resource := range apiResourceList.APIResources {
 			// Filter out subresources (like /status, /scale)
 			if strings.Contains(resource.Name, "/") {
@@ -506,9 +517,9 @@ func (r *LifecycleReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				continue
 			}
 
-			gv, err := schema.ParseGroupVersion(apiResourceList.GroupVersion)
-			if err != nil {
-				setupLog.Error(err, "failed to parse group version", "groupVersion", apiResourceList.GroupVersion)
+			// Filter based on config
+			if !r.Config.IsResourceAllowed(resource.Name, gv.Group) {
+				setupLog.V(1).Info("Skipping resource due to configuration", "resource", resource.Name, "group", gv.Group)
 				continue
 			}
 
@@ -531,7 +542,7 @@ func (r *LifecycleReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, a client.Object) []reconcile.Request {
 					return []reconcile.Request{{NamespacedName: client.ObjectKeyFromObject(a)}}
 				}),
-				builder.WithPredicates(annotationPredicate),
+				builder.WithPredicates(annotationPredicate, namespacePredicate),
 			)
 		}
 	}

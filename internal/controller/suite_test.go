@@ -29,6 +29,9 @@ var testEnv *envtest.Environment
 var ctx context.Context
 var cancel context.CancelFunc
 
+// Reconciler is exported to allow integration tests to modify the Config at runtime.
+var Reconciler *LifecycleReconciler
+
 func TestControllers(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Controller Suite")
@@ -69,11 +72,14 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).ToNot(HaveOccurred())
 
-	err = (&LifecycleReconciler{
+	Reconciler = &LifecycleReconciler{
 		Client:   k8sManager.GetClient(),
 		Scheme:   k8sManager.GetScheme(),
 		Recorder: k8sManager.GetEventRecorderFor("lifecycle-controller-test"),
-	}).SetupWithManager(k8sManager)
+		// Config: initialized as empty (allow all) by default
+	}
+
+	err = Reconciler.SetupWithManager(k8sManager)
 	Expect(err).ToNot(HaveOccurred())
 
 	go func() {
