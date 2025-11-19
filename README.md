@@ -121,6 +121,36 @@ To set a fixed lifetime that is not reset on subsequent updates, you can change 
 
 For time-critical operations or to set a fixed expiration that does not change on subsequent applies, it is recommended to use the absolute time annotations (`delete-at`, `restart-at`, `restart-cron`). These define a specific, unambiguous point in time for the action to occur, making them more reliable for scheduled maintenance or cleanup.
 
+## Scope & Permissions
+
+By default, the controller discovers and watches **all** available resources (`*.*`) across **all** namespaces. In production or multi-tenant environments, you may want to restrict this scope to improve security and performance.
+
+The controller supports glob-style patterns for filtering resources and namespaces via command-line flags (or Helm values).
+
+### Configuration Flags
+
+- `--watch-resource` - (Repeatable) Glob pattern for resources to watch.
+  - Format: `<resource>.<group>` (e.g. `deployments.apps`, `pods`, `*.k8s.io`).
+  - If not provided, all resources are watched (unless excluded by ignore rules).
+- `--ignore-resource` - (Repeatable) Glob pattern for resources to strictly ignore. Takes precedence over watch rules.
+- `--watch-namespace` - (Repeatable) Glob pattern for namespaces to watch (e.g. `default`, `dev-*`).
+  - Strict Scoping: If provided, the controller will **only** watch resources inside matching namespaces. It will **automatically exclude** cluster-scoped resources (like `Nodes`) with the exception of `Namespace` objects themselves, provided their name matches the pattern.
+- `--ignore-namespace` - (Repeatable) Glob pattern for namespaces to strictly ignore. Takes precedence over watch rules.
+
+### Examples
+
+Watch only deployments in `dev-*` namespaces:
+
+```bash
+--watch-resource=deployments.apps --watch-namespace=dev-*
+```
+
+Watch everything except secrets and anything in `kube-system`:
+
+```bash
+--ignore-resource=secrets --ignore-namespace=kube-system
+```
+
 ## Deployment
 
 `lifecycle-controller` is both as:
@@ -130,9 +160,11 @@ For time-critical operations or to set a fixed expiration that does not change o
 
 ### A Note on Permissions (RBAC)
 
-To dynamically manage any resource type, the controller uses the Kubernetes Discovery API at startup to find all available resources. This requires a `ClusterRole` with wildcard (`*`) permissions for `resources` and `apiGroups` for the verbs `get`, `list`, `watch`, `update`, `patch`, and `delete`.
+By default, the controller generates a `ClusterRole` with wildcard (`*`) permissions for `resources` and `apiGroups`. This allows it to dynamically discover and manage any resource type.
 
-While these permissions are broad, the controller's logic provides a critical safety mechanism: it will only ever take action on a resource that is explicitly annotated with one of the `lifecycle.cezary.dev/...` annotations. It will never modify or delete any other resource in your cluster.
+When installing via Helm, if you configure the `scope.watchResources` value, the chart will automatically restrict the generated `ClusterRole` to only contain permissions for those specific resources. This ensures the controller operates with the Principle of Least Privilege.
+
+If you are running the binary manually or managing RBAC yourself, you should ensure your `ClusterRole` permissions match the resources you intend to manage.
 
 ### Installation with Helm
 
@@ -144,4 +176,17 @@ helm repo update
 helm install lifecycle-controller lifecycle-controller/lifecycle-controller \
   --namespace lifecycle-controller \
   --create-namespace
+```
+
+To configure scoping via Helm (which also tightens RBAC):
+
+```yaml
+controllerManager:
+  scope:
+    watchResources:
+      - "deployments.apps"
+      - "statefulsets.apps"
+    watchNamespaces:
+      - "default"
+      - "dev-*"
 ```
