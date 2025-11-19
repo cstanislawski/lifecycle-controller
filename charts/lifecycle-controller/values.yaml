@@ -53,6 +53,18 @@ controllerManager:
   # enableHTTP2 can be set to true if needed, but defaults to false for security.
   enableHTTP2: false
 
+  # Scoping Configuration
+  # Defines which resources and namespaces the controller should watch.
+  scope:
+    # List of glob patterns for resources to watch (e.g. ["deployments.apps", "pods", "*.k8s.io"])
+    watchResources: []
+    # List of glob patterns for resources to ignore
+    ignoreResources: []
+    # List of glob patterns for namespaces to watch (e.g. ["default", "dev-*"])
+    watchNamespaces: []
+    # List of glob patterns for namespaces to ignore
+    ignoreNamespaces: []
+
 metrics:
   # Enable the metrics endpoint
   enabled: true
