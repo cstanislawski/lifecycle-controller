@@ -82,9 +82,11 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
-	flag.Var(&watchResources, "watch-resource", "Glob pattern for resources to watch (e.g. 'deployments.apps', 'pods', '*.k8s.io'). Can be repeated.")
+	flag.Var(&watchResources, "watch-resource", "Glob pattern for resources to watch "+
+		"(e.g. 'deployments.apps', 'pods', '*.k8s.io'). Can be repeated.")
 	flag.Var(&ignoreResources, "ignore-resource", "Glob pattern for resources to ignore. Can be repeated.")
-	flag.Var(&watchNamespaces, "watch-namespace", "Glob pattern for namespaces to watch (e.g. 'default', 'dev-*'). Can be repeated.")
+	flag.Var(&watchNamespaces, "watch-namespace", "Glob pattern for namespaces to watch "+
+		"(e.g. 'default', 'dev-*'). Can be repeated.")
 	flag.Var(&ignoreNamespaces, "ignore-namespace", "Glob pattern for namespaces to ignore. Can be repeated.")
 
 	opts := zap.Options{
