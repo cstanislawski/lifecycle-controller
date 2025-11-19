@@ -1,4 +1,4 @@
-name: Verify Helm Chart
+name: Test Helm Chart
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -9,14 +9,14 @@ on:
     paths:
       - 'charts/**'
       - 'Makefile'
-      - '.github/workflows/helm-test.yml'
+      - '.github/workflows/test-helm.yml'
 
 env:
   HELM_CHART_PATH: charts/lifecycle-controller
 
 jobs:
-  test-lint:
-    name: Run on Ubuntu
+  template-test:
+    name: Template Render
     runs-on: ubuntu-latest
     steps:
       - name: Clone the code
@@ -31,9 +31,6 @@ jobs:
         uses: azure/setup-helm@v4
         with:
           version: ${{ steps.get-helm-version.outputs.version }}
-
-      - name: Running Helm Lint
-        run: make helm-lint HELM_CHART_PATH=${{ env.HELM_CHART_PATH }}
 
       - name: Running Helm Template Validation
         run: make helm-template HELM_CHART_PATH=${{ env.HELM_CHART_PATH }}

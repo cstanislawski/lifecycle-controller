@@ -275,15 +275,20 @@ func GetDeployment(name, namespace string, g Gomega) *appsv1.Deployment {
 
 // GetPodForRelease is a helper to fetch the first pod for a given helm release.
 func GetPodForRelease(g Gomega, releaseName, namespace string) *corev1.Pod {
+	// Filter out pods that are terminating (have a deletionTimestamp)
+	// This prevents race conditions where we pick up a dying pod from a previous test run
+	goTemplate := "go-template={{ range .items }}{{ if not .metadata.deletionTimestamp }}" +
+		"{{ .metadata.name }}{{ \"\\n\" }}{{ end }}{{ end }}"
+
 	cmd := exec.Command("kubectl", "get", "pods",
 		"-l", fmt.Sprintf("app.kubernetes.io/instance=%s", releaseName),
-		"-o", "go-template={{ range .items }}{{ .metadata.name }}{{ \"\\n\" }}{{ end }}",
+		"-o", goTemplate,
 		"-n", namespace,
 	)
 	podOutput, err := Run(cmd)
 	g.Expect(err).NotTo(HaveOccurred())
 	podNames := GetNonEmptyLines(podOutput)
-	g.Expect(podNames).To(HaveLen(1), "expected 1 pod for the helm release")
+	g.Expect(podNames).To(HaveLen(1), "expected 1 running pod for the helm release")
 
 	return GetPod(g, podNames[0], namespace)
 }
@@ -311,7 +316,15 @@ func GetPodsForRelease(g Gomega, releaseName, namespace string) []corev1.Pod {
 
 	var podList corev1.PodList
 	g.Expect(json.Unmarshal([]byte(podOutput), &podList)).To(Succeed())
-	return podList.Items
+
+	// Manually filter out terminating pods
+	var activePods []corev1.Pod
+	for _, pod := range podList.Items {
+		if pod.DeletionTimestamp == nil {
+			activePods = append(activePods, pod)
+		}
+	}
+	return activePods
 }
 
 // GetLease is a helper to fetch a Lease object by name.
