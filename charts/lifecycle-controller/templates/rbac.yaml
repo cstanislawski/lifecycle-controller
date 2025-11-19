@@ -7,9 +7,23 @@ metadata:
   labels:
     {{- include "lifecycle-controller.labels" . | nindent 4 }}
 rules:
+{{- if .Values.controllerManager.scope.watchResources }}
+  {{- range .Values.controllerManager.scope.watchResources }}
+  {{- $parts := splitList "." . }}
+  {{- $res := index $parts 0 }}
+  {{- $grp := "" }}
+  {{- if gt (len $parts) 1 }}
+    {{- $grp = index $parts 1 }}
+  {{- end }}
+- apiGroups: ["{{ $grp }}"]
+  resources: ["{{ $res }}"]
+  verbs: ["delete", "get", "list", "patch", "update", "watch"]
+  {{- end }}
+{{- else }}
 - apiGroups: ["*"]
   resources: ["*"]
   verbs: ["delete", "get", "list", "patch", "update", "watch"]
+{{- end }}
 - apiGroups: [""]
   resources: ["events"]
   verbs: ["create", "patch"]

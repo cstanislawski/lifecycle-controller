@@ -122,6 +122,204 @@ spec:
 		})
 	})
 
+	Context("Scoped Watch Configuration", func() {
+		const scopedReleaseName = "lc-helm-scoped"
+		// We use the manager namespace for test resources to avoid creating extra NS logic
+		const testNamespace = managerNamespace
+
+		AfterEach(func() {
+			By("uninstalling the scoped helm chart")
+			cmd := exec.Command("helm", "uninstall", scopedReleaseName, "--namespace", managerNamespace)
+			_, _ = utils.Run(cmd)
+		})
+
+		It("should only process resources specified in watch-resource", func() {
+			By("installing the helm chart watching ONLY ConfigMaps")
+			repoAndTag := strings.SplitN(projectImage, ":", 2)
+			repo, tag := repoAndTag[0], repoAndTag[1]
+
+			// Watch only ConfigMaps. Ignore Secrets (or implicitly ignore everything else).
+			cmd := exec.Command("helm", "install", scopedReleaseName, chartPath,
+				"--namespace", managerNamespace,
+				"--set", fmt.Sprintf("image.repository=%s", repo),
+				"--set", fmt.Sprintf("image.tag=%s", tag),
+				"--set", "image.pullPolicy=Never",
+				"--set", "controllerManager.scope.watchResources[0]=configmaps",
+			)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func(g Gomega) {
+				pod := utils.GetPodForRelease(g, scopedReleaseName, managerNamespace)
+				g.Expect(pod.Status.Phase).To(Equal(corev1.PodRunning))
+			}).WithTimeout(deploymentTimeout).WithPolling(time.Second).Should(Succeed())
+
+			By("Creating a ConfigMap (watched) with delete-after")
+			cmName := "scoped-cm-watched"
+			cmYAML := fmt.Sprintf(`
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: %s
+  namespace: %s
+  annotations:
+    lifecycle.cezary.dev/delete-after: "5s"
+data:
+  foo: bar
+`, cmName, testNamespace)
+			utils.ApplyYAML(cmYAML)
+
+			By("Creating a Secret (ignored) with delete-after")
+			secretName := "scoped-secret-ignored"
+			secretYAML := fmt.Sprintf(`
+apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+  annotations:
+    lifecycle.cezary.dev/delete-after: "5s"
+stringData:
+  foo: bar
+`, secretName, testNamespace)
+			utils.ApplyYAML(secretYAML)
+
+			By("Verifying the ConfigMap IS deleted")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "configmap", cmName, "-n", testNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).To(HaveOccurred(), "ConfigMap should have been deleted")
+			}).WithTimeout(30 * time.Second).WithPolling(2 * time.Second).Should(Succeed())
+
+			By("Verifying the Secret is NOT deleted (it is not watched)")
+			Consistently(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "secret", secretName, "-n", testNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred(), "Secret should still exist")
+			}).WithTimeout(20 * time.Second).WithPolling(2 * time.Second).Should(Succeed())
+		})
+
+		It("should only process namespaces specified in watch-namespace", func() {
+			allowedNS := "e2e-allowed-ns"
+			ignoredNS := "e2e-ignored-ns"
+
+			cmd := exec.Command("kubectl", "create", "ns", allowedNS)
+			utils.Run(cmd)
+			cmd = exec.Command("kubectl", "create", "ns", ignoredNS)
+			utils.Run(cmd)
+
+			defer func() {
+				exec.Command("kubectl", "delete", "ns", allowedNS).Run()
+				exec.Command("kubectl", "delete", "ns", ignoredNS).Run()
+			}()
+
+			By("installing the helm chart watching ONLY allowed-ns")
+			repoAndTag := strings.SplitN(projectImage, ":", 2)
+			repo, tag := repoAndTag[0], repoAndTag[1]
+
+			cmd = exec.Command("helm", "install", scopedReleaseName, chartPath,
+				"--namespace", managerNamespace,
+				"--set", fmt.Sprintf("image.repository=%s", repo),
+				"--set", fmt.Sprintf("image.tag=%s", tag),
+				"--set", "image.pullPolicy=Never",
+				"--set", fmt.Sprintf("controllerManager.scope.watchNamespaces[0]=%s", allowedNS),
+			)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func(g Gomega) {
+				pod := utils.GetPodForRelease(g, scopedReleaseName, managerNamespace)
+				g.Expect(pod.Status.Phase).To(Equal(corev1.PodRunning))
+			}).WithTimeout(deploymentTimeout).WithPolling(time.Second).Should(Succeed())
+
+			By("Creating ConfigMap in allowed NS")
+			allowedCM := "cm-allowed"
+			utils.ApplyYAML(fmt.Sprintf(`
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: %s
+  namespace: %s
+  annotations:
+    lifecycle.cezary.dev/delete-after: "5s"
+data: { key: val }
+`, allowedCM, allowedNS))
+
+			By("Creating ConfigMap in ignored NS")
+			ignoredCM := "cm-ignored"
+			utils.ApplyYAML(fmt.Sprintf(`
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: %s
+  namespace: %s
+  annotations:
+    lifecycle.cezary.dev/delete-after: "5s"
+data: { key: val }
+`, ignoredCM, ignoredNS))
+
+			By("Verifying allowed NS resource IS deleted")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "cm", allowedCM, "-n", allowedNS)
+				_, err := utils.Run(cmd)
+				g.Expect(err).To(HaveOccurred())
+			}).WithTimeout(30 * time.Second).WithPolling(2 * time.Second).Should(Succeed())
+
+			By("Verifying ignored NS resource is NOT deleted")
+			Consistently(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "cm", ignoredCM, "-n", ignoredNS)
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+			}).WithTimeout(20 * time.Second).WithPolling(2 * time.Second).Should(Succeed())
+		})
+
+		It("should prioritize ignore-resource over watch-resource (Precedence)", func() {
+			By("installing the helm chart watching ConfigMaps but IGNORING a specific ConfigMap")
+			repoAndTag := strings.SplitN(projectImage, ":", 2)
+			repo, tag := repoAndTag[0], repoAndTag[1]
+
+			// In this case, we watch ConfigMaps, but we ignore ConfigMaps.
+			// This effectively disables the ConfigMap watcher.
+			// NOTE: Since we filter resources at the discovery phase using the scope,
+			// if we match 'Ignore' logic, the controller won't even start the watcher.
+			cmd := exec.Command("helm", "install", scopedReleaseName, chartPath,
+				"--namespace", managerNamespace,
+				"--set", fmt.Sprintf("image.repository=%s", repo),
+				"--set", fmt.Sprintf("image.tag=%s", tag),
+				"--set", "image.pullPolicy=Never",
+				"--set", "controllerManager.scope.watchResources[0]=configmaps",
+				"--set", "controllerManager.scope.ignoreResources[0]=configmaps",
+			)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func(g Gomega) {
+				pod := utils.GetPodForRelease(g, scopedReleaseName, managerNamespace)
+				g.Expect(pod.Status.Phase).To(Equal(corev1.PodRunning))
+			}).WithTimeout(deploymentTimeout).WithPolling(time.Second).Should(Succeed())
+
+			By("Creating a ConfigMap with delete-after")
+			cmName := "ignored-by-precedence"
+			utils.ApplyYAML(fmt.Sprintf(`
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: %s
+  namespace: %s
+  annotations:
+    lifecycle.cezary.dev/delete-after: "5s"
+data: { key: val }
+`, cmName, testNamespace))
+
+			By("Verifying the ConfigMap is NOT deleted because Ignore overrides Watch")
+			Consistently(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "cm", cmName, "-n", testNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred(), "ConfigMap should persist")
+			}).WithTimeout(20 * time.Second).WithPolling(2 * time.Second).Should(Succeed())
+		})
+	})
+
 	Context("Helm Install with Custom Values", func() {
 		const customReleaseName = "lc-helm-custom"
 

@@ -52,6 +52,18 @@ spec:
             {{- if .Values.controllerManager.enableHTTP2 }}
             - --enable-http2
             {{- end }}
+            {{- range .Values.controllerManager.scope.watchResources }}
+            - --watch-resource={{ . }}
+            {{- end }}
+            {{- range .Values.controllerManager.scope.ignoreResources }}
+            - --ignore-resource={{ . }}
+            {{- end }}
+            {{- range .Values.controllerManager.scope.watchNamespaces }}
+            - --watch-namespace={{ . }}
+            {{- end }}
+            {{- range .Values.controllerManager.scope.ignoreNamespaces }}
+            - --ignore-namespace={{ . }}
+            {{- end }}
           ports:
           - containerPort: 8081
             name: healthz
