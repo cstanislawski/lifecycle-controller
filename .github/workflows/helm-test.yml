@@ -9,6 +9,7 @@ on:
     paths:
       - 'charts/**'
       - 'Makefile'
+      - '.github/workflows/helm-test.yml'
 
 env:
   HELM_CHART_PATH: charts/lifecycle-controller
