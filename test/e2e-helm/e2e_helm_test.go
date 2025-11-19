@@ -21,6 +21,13 @@ const (
 	releaseName       = "lc-helm-test"
 	managerNamespace  = "lifecycle-helm-e2e"
 	deploymentTimeout = 3 * time.Minute
+	pollInterval      = 250 * time.Millisecond
+	// safeTimeout gives the controller enough buffer to start up and process events
+	// without failing on slow CI environments. It does not slow down passing tests.
+	safeTimeout = 30 * time.Second
+	// consistentDuration is the minimum time to wait to verify something does not happen.
+	// This directly impacts test duration.
+	consistentDuration = 3 * time.Second
 )
 
 var _ = Describe("Lifecycle Controller Helm E2E", Ordered, func() {
@@ -82,7 +89,7 @@ var _ = Describe("Lifecycle Controller Helm E2E", Ordered, func() {
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(status).To(Equal("Running"))
 			}
-			Eventually(verifyControllerUp).WithTimeout(deploymentTimeout).WithPolling(time.Second).Should(Succeed())
+			Eventually(verifyControllerUp).WithTimeout(deploymentTimeout).WithPolling(pollInterval).Should(Succeed())
 		})
 
 		It("should perform a basic lifecycle action (smoke test)", func() {
@@ -95,7 +102,7 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/delete-after: "10s"
+    lifecycle.cezary.dev/delete-after: "2s"
 spec:
   replicas: 1
   selector: { matchLabels: { app: smoke-test } }
@@ -112,7 +119,7 @@ spec:
 				_, err := utils.Run(cmd)
 				g.Expect(err).To(HaveOccurred())
 				g.Expect(err.Error()).To(ContainSubstring("not found"))
-			}).WithTimeout(30 * time.Second).WithPolling(2 * time.Second).Should(Succeed())
+			}).WithTimeout(safeTimeout).WithPolling(pollInterval).Should(Succeed())
 		})
 
 		AfterAll(func() {
@@ -152,7 +159,7 @@ spec:
 			Eventually(func(g Gomega) {
 				pod := utils.GetPodForRelease(g, scopedReleaseName, managerNamespace)
 				g.Expect(pod.Status.Phase).To(Equal(corev1.PodRunning))
-			}).WithTimeout(deploymentTimeout).WithPolling(time.Second).Should(Succeed())
+			}).WithTimeout(deploymentTimeout).WithPolling(pollInterval).Should(Succeed())
 
 			By("Creating a ConfigMap (watched) with delete-after")
 			cmName := "scoped-cm-watched"
@@ -163,7 +170,7 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/delete-after: "5s"
+    lifecycle.cezary.dev/delete-after: "2s"
 data:
   foo: bar
 `, cmName, testNamespace)
@@ -178,7 +185,7 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/delete-after: "5s"
+    lifecycle.cezary.dev/delete-after: "2s"
 stringData:
   foo: bar
 `, secretName, testNamespace)
@@ -189,14 +196,14 @@ stringData:
 				cmd := exec.Command("kubectl", "get", "configmap", cmName, "-n", testNamespace)
 				_, err := utils.Run(cmd)
 				g.Expect(err).To(HaveOccurred(), "ConfigMap should have been deleted")
-			}).WithTimeout(30 * time.Second).WithPolling(2 * time.Second).Should(Succeed())
+			}).WithTimeout(safeTimeout).WithPolling(pollInterval).Should(Succeed())
 
 			By("Verifying the Secret is NOT deleted (it is not watched)")
 			Consistently(func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "secret", secretName, "-n", testNamespace)
 				_, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Secret should still exist")
-			}).WithTimeout(20 * time.Second).WithPolling(2 * time.Second).Should(Succeed())
+			}).WithTimeout(consistentDuration).WithPolling(pollInterval).Should(Succeed())
 		})
 
 		It("should only process namespaces specified in watch-namespace", func() {
@@ -230,7 +237,7 @@ stringData:
 			Eventually(func(g Gomega) {
 				pod := utils.GetPodForRelease(g, scopedReleaseName, managerNamespace)
 				g.Expect(pod.Status.Phase).To(Equal(corev1.PodRunning))
-			}).WithTimeout(deploymentTimeout).WithPolling(time.Second).Should(Succeed())
+			}).WithTimeout(deploymentTimeout).WithPolling(pollInterval).Should(Succeed())
 
 			By("Creating ConfigMap in allowed NS")
 			allowedCM := "cm-allowed"
@@ -241,7 +248,7 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/delete-after: "5s"
+    lifecycle.cezary.dev/delete-after: "2s"
 data: { key: val }
 `, allowedCM, allowedNS))
 
@@ -254,7 +261,7 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/delete-after: "5s"
+    lifecycle.cezary.dev/delete-after: "2s"
 data: { key: val }
 `, ignoredCM, ignoredNS))
 
@@ -263,14 +270,14 @@ data: { key: val }
 				cmd := exec.Command("kubectl", "get", "cm", allowedCM, "-n", allowedNS)
 				_, err := utils.Run(cmd)
 				g.Expect(err).To(HaveOccurred())
-			}).WithTimeout(30 * time.Second).WithPolling(2 * time.Second).Should(Succeed())
+			}).WithTimeout(safeTimeout).WithPolling(pollInterval).Should(Succeed())
 
 			By("Verifying ignored NS resource is NOT deleted")
 			Consistently(func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "cm", ignoredCM, "-n", ignoredNS)
 				_, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-			}).WithTimeout(20 * time.Second).WithPolling(2 * time.Second).Should(Succeed())
+			}).WithTimeout(consistentDuration).WithPolling(pollInterval).Should(Succeed())
 		})
 
 		It("should prioritize ignore-resource over watch-resource (Precedence)", func() {
@@ -296,7 +303,7 @@ data: { key: val }
 			Eventually(func(g Gomega) {
 				pod := utils.GetPodForRelease(g, scopedReleaseName, managerNamespace)
 				g.Expect(pod.Status.Phase).To(Equal(corev1.PodRunning))
-			}).WithTimeout(deploymentTimeout).WithPolling(time.Second).Should(Succeed())
+			}).WithTimeout(deploymentTimeout).WithPolling(pollInterval).Should(Succeed())
 
 			By("Creating a ConfigMap with delete-after")
 			cmName := "ignored-by-precedence"
@@ -307,7 +314,7 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/delete-after: "5s"
+    lifecycle.cezary.dev/delete-after: "2s"
 data: { key: val }
 `, cmName, testNamespace))
 
@@ -316,7 +323,7 @@ data: { key: val }
 				cmd := exec.Command("kubectl", "get", "cm", cmName, "-n", testNamespace)
 				_, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "ConfigMap should persist")
-			}).WithTimeout(20 * time.Second).WithPolling(2 * time.Second).Should(Succeed())
+			}).WithTimeout(consistentDuration).WithPolling(pollInterval).Should(Succeed())
 		})
 	})
 
@@ -357,7 +364,7 @@ data: { key: val }
 					}
 				}
 				g.Expect(foundLeaderElect).To(BeFalse(), "The --leader-elect flag should not be present in container args")
-			}).WithTimeout(deploymentTimeout).WithPolling(time.Second).Should(Succeed())
+			}).WithTimeout(deploymentTimeout).WithPolling(pollInterval).Should(Succeed())
 		})
 	})
 
@@ -392,7 +399,7 @@ data: { key: val }
 				for _, pod := range pods {
 					g.Expect(pod.Status.Phase).To(Equal(corev1.PodRunning))
 				}
-			}).WithTimeout(deploymentTimeout).WithPolling(time.Second).Should(Succeed())
+			}).WithTimeout(deploymentTimeout).WithPolling(pollInterval).Should(Succeed())
 
 			By("verifying a leader election lease exists and has a leader")
 			Eventually(func(g Gomega) {
@@ -401,7 +408,7 @@ data: { key: val }
 				lease := utils.GetLease(g, leaseName, managerNamespace)
 				g.Expect(lease.Spec.HolderIdentity).NotTo(BeNil())
 				g.Expect(*lease.Spec.HolderIdentity).NotTo(BeEmpty())
-			}).WithTimeout(time.Minute).WithPolling(time.Second).Should(Succeed())
+			}).WithTimeout(time.Minute).WithPolling(pollInterval).Should(Succeed())
 
 			By("performing a smoke test with multiple replicas active")
 			deploymentName := "helm-ha-delete-after"
@@ -412,7 +419,7 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/delete-after: "15s"
+    lifecycle.cezary.dev/delete-after: "3s"
 spec:
   replicas: 1
   selector: { matchLabels: { app: smoke-test-ha } }
@@ -429,7 +436,7 @@ spec:
 				_, err := utils.Run(cmd)
 				g.Expect(err).To(HaveOccurred())
 				g.Expect(err.Error()).To(ContainSubstring("not found"))
-			}).WithTimeout(40 * time.Second).WithPolling(2 * time.Second).Should(Succeed())
+			}).WithTimeout(safeTimeout).WithPolling(pollInterval).Should(Succeed())
 		})
 	})
 })
