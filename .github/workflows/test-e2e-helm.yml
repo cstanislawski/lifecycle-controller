@@ -12,6 +12,7 @@ on:
       - 'Makefile'
       - 'go.mod'
       - 'go.sum'
+      - '.github/workflows/test-e2e-helm.yml'
 
 env:
   HELM_CHART_PATH: charts/lifecycle-controller
