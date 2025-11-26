@@ -439,4 +439,77 @@ spec:
 			}).WithTimeout(safeTimeout).WithPolling(pollInterval).Should(Succeed())
 		})
 	})
+	Context("Logging Configuration", func() {
+		const loggingReleaseName = "lc-helm-logging"
+
+		AfterEach(func() {
+			By("uninstalling the logging helm chart")
+			cmd := exec.Command("helm", "uninstall", loggingReleaseName, "--namespace", managerNamespace)
+			_, _ = utils.Run(cmd)
+		})
+
+		It("should output debug logs when logLevel is set to debug", func() {
+			By("installing the helm chart with logLevel=debug")
+			repoAndTag := strings.SplitN(projectImage, ":", 2)
+			repo, tag := repoAndTag[0], repoAndTag[1]
+
+			cmd := exec.Command("helm", "install", loggingReleaseName, chartPath,
+				"--namespace", managerNamespace,
+				"--set", fmt.Sprintf("image.repository=%s", repo),
+				"--set", fmt.Sprintf("image.tag=%s", tag),
+				"--set", "image.pullPolicy=Never",
+				"--set", "controllerManager.logLevel=debug",
+			)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			var podName string
+			By("waiting for the controller to start")
+			Eventually(func(g Gomega) {
+				pod := utils.GetPodForRelease(g, loggingReleaseName, managerNamespace)
+				g.Expect(pod.Status.Phase).To(Equal(corev1.PodRunning))
+				podName = pod.Name
+			}).WithTimeout(deploymentTimeout).WithPolling(pollInterval).Should(Succeed())
+
+			By("verifying logs contain debug level entries")
+			Eventually(func(g Gomega) {
+				logs := utils.GetLogs(g, podName, managerNamespace)
+				g.Expect(logs).To(ContainSubstring(`"level":"debug"`), "Logs should contain debug entries")
+			}).WithTimeout(30 * time.Second).WithPolling(pollInterval).Should(Succeed())
+		})
+
+		It("should NOT output info logs when logLevel is set to error", func() {
+			By("installing the helm chart with logLevel=error")
+			repoAndTag := strings.SplitN(projectImage, ":", 2)
+			repo, tag := repoAndTag[0], repoAndTag[1]
+
+			cmd := exec.Command("helm", "install", loggingReleaseName, chartPath,
+				"--namespace", managerNamespace,
+				"--set", fmt.Sprintf("image.repository=%s", repo),
+				"--set", fmt.Sprintf("image.tag=%s", tag),
+				"--set", "image.pullPolicy=Never",
+				"--set", "controllerManager.logLevel=error",
+			)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			var podName string
+			By("waiting for the controller to start")
+			Eventually(func(g Gomega) {
+				pod := utils.GetPodForRelease(g, loggingReleaseName, managerNamespace)
+				g.Expect(pod.Status.Phase).To(Equal(corev1.PodRunning))
+				podName = pod.Name
+			}).WithTimeout(deploymentTimeout).WithPolling(pollInterval).Should(Succeed())
+
+			By("verifying logs DO NOT contain info level entries")
+			Eventually(func(g Gomega) {
+				logs := utils.GetLogs(g, podName, managerNamespace)
+
+				// "starting manager" is an INFO log in main.go.
+				// If level is error, this should NOT appear.
+				g.Expect(logs).NotTo(ContainSubstring(`"level":"info"`), "Logs should NOT contain info entries")
+				g.Expect(logs).NotTo(ContainSubstring(`"msg":"starting manager"`), "Startup info logs should be suppressed")
+			}).WithTimeout(30 * time.Second).WithPolling(pollInterval).Should(Succeed())
+		})
+	})
 })
