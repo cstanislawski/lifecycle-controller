@@ -89,9 +89,8 @@ func main() {
 		"(e.g. 'default', 'dev-*'). Can be repeated.")
 	flag.Var(&ignoreNamespaces, "ignore-namespace", "Glob pattern for namespaces to ignore. Can be repeated.")
 
-	opts := zap.Options{
-		Development: true,
-	}
+	opts := zap.Options{}
+
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
