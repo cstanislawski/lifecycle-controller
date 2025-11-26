@@ -8,6 +8,9 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'charts/*/Chart.yaml'
+      - '.github/workflows/release-helm.yml'
 
 env:
   HELM_CHART_PATH: charts/lifecycle-controller
