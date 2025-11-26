@@ -53,6 +53,9 @@ controllerManager:
   # enableHTTP2 can be set to true if needed, but defaults to false for security.
   enableHTTP2: false
 
+  # Log level for the controller (debug, info, error)
+  logLevel: info
+
   # Scoping Configuration
   # Defines which resources and namespaces the controller should watch.
   scope:

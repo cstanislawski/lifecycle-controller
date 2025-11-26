@@ -337,3 +337,11 @@ func GetLease(g Gomega, name, namespace string) *coordinationv1.Lease {
 	g.Expect(json.Unmarshal([]byte(output), &lease)).To(Succeed())
 	return &lease
 }
+
+// GetLogs fetches the logs from a specific pod.
+func GetLogs(g Gomega, podName, namespace string) string {
+	cmd := exec.Command("kubectl", "logs", podName, "-n", namespace)
+	output, err := Run(cmd)
+	g.Expect(err).NotTo(HaveOccurred(), "Failed to fetch logs for pod %s", podName)
+	return output
+}
