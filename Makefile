@@ -283,6 +283,7 @@ deploy-helm: docker-build kind-load ## Deploy controller using Helm to the K8s c
 	$(HELM) upgrade --install lifecycle-controller $(HELM_CHART_PATH) \
 		--namespace $(NAMESPACE) \
 		--create-namespace \
+		--values ./charts/lifecycle-controller/values.yaml \
 		--set image.repository=$$repo \
 		--set image.tag=$$tag \
 		--set image.pullPolicy=IfNotPresent
