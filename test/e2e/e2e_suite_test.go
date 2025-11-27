@@ -22,7 +22,7 @@ var (
 )
 
 func init() {
-	// Read the image name from the environment variable, or default if not set
+	// Read the image name from the environment variable, panic if not set
 	projectImage = os.Getenv("IMG")
 	if projectImage == "" {
 		panic("IMG environment variable is not set")
