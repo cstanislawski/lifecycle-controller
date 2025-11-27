@@ -5,6 +5,7 @@ package e2e
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"testing"
 
@@ -17,8 +18,16 @@ import (
 var (
 	// projectImage is the name of the image which will be built and loaded
 	// with the code source changes to be tested.
-	projectImage = "github.com/cstanislawski/lifecycle-controller:v0.0.1"
+	projectImage string
 )
+
+func init() {
+	// Read the image name from the environment variable, panic if not set
+	projectImage = os.Getenv("IMG")
+	if projectImage == "" {
+		panic("IMG environment variable is not set")
+	}
+}
 
 func TestE2E(t *testing.T) {
 	RegisterFailHandler(Fail)
