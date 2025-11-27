@@ -1,5 +1,7 @@
 # Image URL to use all building/pushing image targets
-IMG ?= controller:latest
+IMG ?= ghcr.io/cstanislawski/lifecycle-controller:dev
+# Default namespace for the controller
+NAMESPACE ?= lifecycle-controller
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -61,14 +63,11 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
-# TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
-# The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
-# CertManager is installed by default; skip with:
-# - CERT_MANAGER_INSTALL_SKIP=true
-KIND_CLUSTER ?= lifecycle-controller-test-e2e
+# Default cluster name for local development
+KIND_CLUSTER ?= lifecycle-controller
 
-.PHONY: setup-test-e2e
-setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
+.PHONY: setup
+setup: ## Create a Kind cluster. Use KIND_CLUSTER=<name> to override.
 	@command -v $(KIND) >/dev/null 2>&1 || { \
 		echo "Kind is not installed. Please install Kind manually."; \
 		exit 1; \
@@ -81,14 +80,30 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 			$(KIND) create cluster --name $(KIND_CLUSTER) ;; \
 	esac
 
-.PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
-	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
-	$(MAKE) cleanup-test-e2e
+.PHONY: cleanup
+cleanup: ## Delete the Kind cluster specified by KIND_CLUSTER.
+	@$(KIND) delete cluster --name $(KIND_CLUSTER)
+
+# TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
+# The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
+# CertManager is installed by default; skip with:
+# - CERT_MANAGER_INSTALL_SKIP=true
+
+# E2E Test specific cluster
+E2E_KIND_CLUSTER ?= lifecycle-controller-test-e2e
+
+.PHONY: setup-test-e2e
+setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
+	$(MAKE) setup KIND_CLUSTER=$(E2E_KIND_CLUSTER)
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
-	@$(KIND) delete cluster --name $(KIND_CLUSTER)
+	$(MAKE) cleanup KIND_CLUSTER=$(E2E_KIND_CLUSTER)
+
+.PHONY: test-e2e
+test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests.
+	KIND=$(KIND) KIND_CLUSTER=$(E2E_KIND_CLUSTER) IMG=$(IMG) NAMESPACE=$(NAMESPACE) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
+	$(MAKE) cleanup-test-e2e
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
@@ -123,6 +138,10 @@ docker-build: ## Build docker image with the manager.
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
 
+.PHONY: kind-load
+kind-load: ## Load the docker image into the current Kind cluster.
+	$(KIND) load docker-image $(IMG) --name $(KIND_CLUSTER)
+
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
 # - be able to use docker buildx. More info: https://docs.docker.com/build/buildx/
@@ -143,8 +162,11 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
 	mkdir -p dist
-	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
-	$(KUSTOMIZE) build config/default > dist/install.yaml
+	mkdir -p $(LOCALBIN)/tmp
+	cp -R config $(LOCALBIN)/tmp/config
+	cd $(LOCALBIN)/tmp/config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
+	$(KUSTOMIZE) build $(LOCALBIN)/tmp/config/default > dist/install.yaml
+	rm -rf $(LOCALBIN)/tmp
 
 ##@ Deployment
 
@@ -161,12 +183,15 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 	$(KUSTOMIZE) build config/crd | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
 .PHONY: deploy
-deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
-	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
-	$(KUSTOMIZE) build config/default | $(KUBECTL) apply -f -
+deploy: manifests kustomize docker-build kind-load ## Deploy controller to the K8s cluster specified in ~/.kube/config. Builds and loads image.
+	mkdir -p $(LOCALBIN)/tmp
+	cp -R config $(LOCALBIN)/tmp/config
+	cd $(LOCALBIN)/tmp/config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
+	$(KUSTOMIZE) build $(LOCALBIN)/tmp/config/default | $(KUBECTL) apply -f -
+	rm -rf $(LOCALBIN)/tmp
 
 .PHONY: undeploy
-undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
+undeploy: kustomize ## Undeploy controller from the K8s cluster.
 	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
 ##@ Dependencies
@@ -250,7 +275,23 @@ helm-lint: ## Lint the Helm chart.
 helm-template: ## Validate the Helm chart by rendering its templates.
 	helm template lifecycle-controller ./$(HELM_CHART_PATH) --debug > /dev/null
 
+.PHONY: deploy-helm
+deploy-helm: docker-build kind-load ## Deploy controller using Helm to the K8s cluster specified in ~/.kube/config. Builds and loads image.
+	@img="$(IMG)"; \
+	repo=$${img%:*} ; \
+	tag=$${img##*:} ; \
+	$(HELM) upgrade --install lifecycle-controller $(HELM_CHART_PATH) \
+		--namespace $(NAMESPACE) \
+		--create-namespace \
+		--set image.repository=$$repo \
+		--set image.tag=$$tag \
+		--set image.pullPolicy=IfNotPresent
+
+.PHONY: undeploy-helm
+undeploy-helm: ## Undeploy controller using Helm.
+	$(HELM) uninstall lifecycle-controller --namespace $(NAMESPACE) --ignore-not-found
+
 .PHONY: test-e2e-helm
-test-e2e-helm: setup-test-e2e manifests generate fmt vet ## Run the Helm e2e tests. Expected an isolated environment using Kind.
-	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e_helm ./test/e2e-helm/ -v -ginkgo.v
+test-e2e-helm: setup-test-e2e manifests generate fmt vet ## Run the Helm e2e tests.
+	KIND=$(KIND) KIND_CLUSTER=$(E2E_KIND_CLUSTER) IMG=$(IMG) go test -tags=e2e_helm ./test/e2e-helm/ -v -ginkgo.v
 	$(MAKE) cleanup-test-e2e

@@ -5,6 +5,7 @@ package e2e
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -15,7 +16,15 @@ import (
 	"github.com/cstanislawski/lifecycle-controller/test/utils"
 )
 
-const managerNamespace = "lifecycle-controller-system"
+var managerNamespace string
+
+func init() {
+	managerNamespace = os.Getenv("NAMESPACE")
+	if managerNamespace == "" {
+		panic("NAMESPACE environment variable must be set for E2E tests")
+	}
+}
+
 const pollInterval = 250 * time.Millisecond
 
 var _ = Describe("Lifecycle Controller E2E", Ordered, func() {
