@@ -162,6 +162,7 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
 	mkdir -p dist
+	rm -rf $(LOCALBIN)/tmp
 	mkdir -p $(LOCALBIN)/tmp
 	cp -R config $(LOCALBIN)/tmp/config
 	cd $(LOCALBIN)/tmp/config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
@@ -184,6 +185,7 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 
 .PHONY: deploy
 deploy: manifests kustomize docker-build kind-load ## Deploy controller to the K8s cluster specified in ~/.kube/config. Builds and loads image.
+	rm -rf $(LOCALBIN)/tmp
 	mkdir -p $(LOCALBIN)/tmp
 	cp -R config $(LOCALBIN)/tmp/config
 	cd $(LOCALBIN)/tmp/config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
