@@ -12,7 +12,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      control-plane: controller-manager
+      app.kubernetes.io/component: controller-manager
       app.kubernetes.io/name: lifecycle-controller
   policyTypes:
     - Ingress
