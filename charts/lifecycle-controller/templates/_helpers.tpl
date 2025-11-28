@@ -48,7 +48,7 @@ Selector labels
 {{- define "lifecycle-controller.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "lifecycle-controller.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
-control-plane: controller-manager
+app.kubernetes.io/component: controller-manager
 {{- end }}
 
 {{/*
