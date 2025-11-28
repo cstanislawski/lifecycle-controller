@@ -57,7 +57,7 @@ var _ = Describe("Lifecycle Controller E2E", Ordered, func() {
 			By("validating that the controller-manager pod is running as expected")
 			verifyControllerUp := func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "pods",
-					"-l", "control-plane=controller-manager",
+					"-l", "app.kubernetes.io/component=controller-manager",
 					"-o", "go-template={{ range .items }}{{ if not .metadata.deletionTimestamp }}{{ .metadata.name }}{{ \"\\n\" }}{{ end }}{{ end }}",
 					"-n", managerNamespace,
 				)
@@ -719,12 +719,12 @@ spec:
 			}).WithTimeout(time.Minute).WithPolling(pollInterval).Should(Succeed())
 
 			By("restarting the controller to discover the new CRD")
-			cmd := exec.Command("kubectl", "delete", "pod", "-n", managerNamespace, "-l", "control-plane=controller-manager")
+			cmd := exec.Command("kubectl", "delete", "pod", "-n", managerNamespace, "-l", "app.kubernetes.io/component=controller-manager")
 			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func(g Gomega) {
-				cmd = exec.Command("kubectl", "wait", "pod", "-n", managerNamespace, "-l", "control-plane=controller-manager", "--for=condition=Ready", "--timeout=2m")
+				cmd = exec.Command("kubectl", "wait", "pod", "-n", managerNamespace, "-l", "app.kubernetes.io/component=controller-manager", "--for=condition=Ready", "--timeout=2m")
 				_, err = utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 			}).WithTimeout(3 * time.Minute).WithPolling(pollInterval).Should(Succeed())
