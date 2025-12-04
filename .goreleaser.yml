@@ -37,37 +37,20 @@ archives:
       - README.md
 
 dockers:
-  - goos: linux
-    goarch: amd64
-    image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:v{{ .Version }}-amd64"
+  - image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:v{{ .Version }}"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:latest"
     dockerfile: Dockerfile.release
-    build_flag_templates:
-      - "--platform=linux/amd64"
     use: buildx
     ids:
       - manager-build
-
-  - goos: linux
-    goarch: arm64
-    image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:v{{ .Version }}-arm64"
-    dockerfile: Dockerfile.release
     build_flag_templates:
-      - "--platform=linux/arm64"
-    use: buildx
-    ids:
-      - manager-build
-
-docker_manifests:
-  - name_template: "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:v{{ .Version }}"
-    image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:v{{ .Version }}-amd64"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:v{{ .Version }}-arm64"
-  - name_template: "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:latest"
-    image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:v{{ .Version }}-amd64"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:v{{ .Version }}-arm64"
+      - "--platform=linux/amd64,linux/arm64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.name={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source={{.GitURL}}"
 
 checksum:
   name_template: "checksums.txt"
