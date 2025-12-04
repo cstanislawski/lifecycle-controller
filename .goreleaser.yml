@@ -23,13 +23,15 @@ builds:
 
 archives:
   - id: manager-archives
-    builds:
+    ids:
       - manager-build
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
-        format: zip
-    format: tar.gz
+        formats:
+          - zip
+    formats:
+      - tar.gz
     files:
       - LICENSE
       - README.md
