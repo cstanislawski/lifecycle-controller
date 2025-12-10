@@ -1,5 +1,4 @@
 # .goreleaser.yml
-# Visit https://goreleaser.com/customization/ for more options
 version: 2
 
 project_name: lifecycle-controller
@@ -42,9 +41,12 @@ dockers:
       - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:latest"
     dockerfile: Dockerfile.release
     use: buildx
+    goos: linux
     ids:
       - manager-build
     build_flag_templates:
+      - "--pull"
+      - "--push"
       - "--platform=linux/amd64,linux/arm64"
       - "--label=org.opencontainers.image.created={{.Date}}"
       - "--label=org.opencontainers.image.name={{.ProjectName}}"
