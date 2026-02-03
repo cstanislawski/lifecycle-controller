@@ -76,7 +76,7 @@ The controller's behavior is configured entirely through annotations.
     - The value should be an ISO 8601 format timestamp. The timezone is determined by the `timezone` annotation.
     - This can be applied directly to a `Namespace` to trigger its deletion. Kubernetes will handle the subsequent removal of all resources within that namespace.
   - `lifecycle.cezary.dev/delete-after`: Relative TTL (e.g., `5m`, `1h`, `3d`). The controller processes this annotation by calculating an absolute deletion time based on the time it first notices the annotation. It then adds a `lifecycle.cezary.dev/delete-at` annotation to the resource with this calculated time. To prevent re-calculation and make the state explicit, the original `lifecycle.cezary.dev/delete-after` annotation is then removed. **Supports `s`, `m`, `h`, and `d` (days).**
-  - `lifecycle.cezary.dev/dry-run: "true"`: A per-resource annotation that makes the controller log the actions it *would* take without executing them. This can also be set via a global flag on the controller.
+  - `lifecycle.cezary.dev/dry-run: "true"`: A per-resource annotation that makes the controller log the actions it would take without executing them. Global dry-run uses `--dry-run=true|false` or Helm `controllerManager.dryRun: true`. Global and per-resource are OR-ed.
 
 - **Only for pod-spawning resources (Deployments, StatefulSets, DaemonSets, etc.):**
   - `lifecycle.cezary.dev/restart-at`: Performs a one-time rolling restart at a specific date and time.

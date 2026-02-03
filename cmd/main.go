@@ -62,6 +62,7 @@ func main() {
 	var leaderElectionID string
 	var watchResources, ignoreResources arrayFlags
 	var watchNamespaces, ignoreNamespaces arrayFlags
+	var globalDryRun bool
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -88,6 +89,8 @@ func main() {
 	flag.Var(&watchNamespaces, "watch-namespace", "Glob pattern for namespaces to watch "+
 		"(e.g. 'default', 'dev-*'). Can be repeated.")
 	flag.Var(&ignoreNamespaces, "ignore-namespace", "Glob pattern for namespaces to ignore. Can be repeated.")
+	flag.BoolVar(&globalDryRun, "dry-run", false,
+		"Enable dry-run mode for all resources. When set, actions are logged but not executed.")
 
 	opts := zap.Options{}
 
@@ -200,12 +203,14 @@ func main() {
 		"watchNamespaces", watchNamespaces,
 		"ignoreNamespaces", ignoreNamespaces,
 	)
+	setupLog.Info("Global dry-run mode", "enabled", globalDryRun)
 
 	if err := (&controller.LifecycleReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Config:   scopeConfig,
-		Recorder: mgr.GetEventRecorderFor("lifecycle-controller"),
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		Config:       scopeConfig,
+		GlobalDryRun: globalDryRun,
+		Recorder:     mgr.GetEventRecorderFor("lifecycle-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Lifecycle")
 		os.Exit(1)
