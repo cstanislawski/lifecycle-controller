@@ -52,6 +52,7 @@ spec:
             {{- if .Values.controllerManager.enableHTTP2 }}
             - --enable-http2
             {{- end }}
+            - --dry-run={{ .Values.controllerManager.dryRun }}
             - --zap-log-level={{ .Values.controllerManager.logLevel }}
             {{- range .Values.controllerManager.scope.watchResources }}
             - --watch-resource={{ . }}
