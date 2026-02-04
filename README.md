@@ -76,7 +76,7 @@ The controller's behavior is configured entirely through annotations.
     - The value should be an ISO 8601 format timestamp. The timezone is determined by the `timezone` annotation.
     - This can be applied directly to a `Namespace` to trigger its deletion. Kubernetes will handle the subsequent removal of all resources within that namespace.
   - `lifecycle.cezary.dev/delete-after`: Relative TTL (e.g., `5m`, `1h`, `3d`). The controller processes this annotation by calculating an absolute deletion time based on the time it first notices the annotation. It then adds a `lifecycle.cezary.dev/delete-at` annotation to the resource with this calculated time. To prevent re-calculation and make the state explicit, the original `lifecycle.cezary.dev/delete-after` annotation is then removed. **Supports `s`, `m`, `h`, and `d` (days).**
-  - `lifecycle.cezary.dev/dry-run: "true"`: A per-resource annotation that makes the controller log the actions it would take without executing them. Global dry-run uses `--dry-run=true|false` or Helm `controllerManager.dryRun: true`. Global and per-resource are OR-ed.
+  - `lifecycle.cezary.dev/dry-run: "true"`: Per-resource dry-run flag.
 
 - **Only for pod-spawning resources (Deployments, StatefulSets, DaemonSets, etc.):**
   - `lifecycle.cezary.dev/restart-at`: Performs a one-time rolling restart at a specific date and time.
@@ -97,15 +97,18 @@ The controller's behavior is configured entirely through annotations.
       - It then updates the `lifecycle.cezary.dev/last-restart-timestamp` to the value of `nextScheduledRestart`. This anchors the next cycle to the previous scheduled time, preventing schedule drift.
   - **Cleanup** - After a one-time `restart-at` action is successfully triggered, the controller will remove the original `lifecycle.cezary.dev/restart-at` annotation to ensure the action is idempotent.
 
-- **Note on Precedence:**
+**Dry-run**
+Dry-run logs the actions the controller would take without executing them. It can be enabled globally (`--dry-run=true|false` or Helm `controllerManager.dryRun: true`) or per-resource via `lifecycle.cezary.dev/dry-run: "true"`. Dry-run is enabled for a given resource if either is set.
+
+- **Precedence:**
   - **Conflicting action types** - If a resource mixes annotations from different action families (any combination of `restart-*` and `delete-*`), the controller treats it as a misconfiguration. It will post a warning `Event` on the resource and take no action.
   - **Multiple annotations of one family** - If more than one annotation of the same family is present on a resource, the controller applies the most specific one ("most specific wins").
-  - **In case of restarts:**
+  - **In case of restarts**
     - `restart-after` is a convenience annotation that is converted into `restart-at` by the controller.
     - `restart-at` (a specific, one-time event) takes highest priority.
     - `restart-cron` (a specific, recurring schedule) is next.
     - `restart-every` (a relative interval) has the lowest priority.
-  - **In case of deletes:**
+  - **In case of deletes**
     - `delete-after` is a convenience annotation that is converted into `delete-at` by the controller.
     - `delete-at` (a specific, one-time event) takes highest priority.
 
