@@ -55,6 +55,7 @@ type LifecycleReconciler struct {
 	Recorder       record.EventRecorder
 	KnownResources []ResourceScope
 	Config         ScopeConfig
+	GlobalDryRun   bool
 }
 
 // +kubebuilder:rbac:groups=*,resources=*,verbs=get;list;watch;delete;update;patch
@@ -176,7 +177,7 @@ func (r *LifecycleReconciler) reconcileLogic(ctx context.Context, obj client.Obj
 		u = &unstructured.Unstructured{Object: unstructuredObj}
 	}
 
-	isDryRun := annotations[DryRunAnnotation] == "true"
+	isDryRun := r.GlobalDryRun || annotations[DryRunAnnotation] == "true"
 	timezoneStr := annotations[TimezoneAnnotation]
 	if timezoneStr == "" {
 		timezoneStr = "UTC"

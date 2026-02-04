@@ -540,5 +540,37 @@ var _ = Describe("Lifecycle Controller", func() {
 
 			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
 		})
+
+		It("should not delete a resource if global dry-run is enabled", func() {
+			By("Enabling global dry-run and creating a deployment with delete-at in the past")
+			Reconciler.GlobalDryRun = true
+			DeferCleanup(func() { Reconciler.GlobalDryRun = false })
+
+			ctx := context.Background()
+			key := types.NamespacedName{Name: "global-dry-run-delete", Namespace: TestNamespace}
+			deployment := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: key.Name, Namespace: key.Namespace,
+					Annotations: map[string]string{
+						DeleteAtAnnotation: time.Now().Add(-time.Minute).Format(time.RFC3339),
+					},
+				},
+				Spec: appsv1.DeploymentSpec{
+					Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "test"}},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "test"}},
+						Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "test", Image: "nginx"}}},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
+
+			Consistently(func(g Gomega) {
+				err := k8sClient.Get(ctx, key, &appsv1.Deployment{})
+				g.Expect(err).NotTo(HaveOccurred())
+			}, 3*time.Second, Interval).Should(Succeed())
+
+			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
+		})
 	})
 })
