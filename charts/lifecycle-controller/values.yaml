@@ -53,6 +53,9 @@ controllerManager:
   # enableHTTP2 can be set to true if needed, but defaults to false for security.
   enableHTTP2: false
 
+  # Enable global dry-run mode (logs actions without executing them)
+  dryRun: false
+
   # Log level for the controller (debug, info, error)
   logLevel: info
 
