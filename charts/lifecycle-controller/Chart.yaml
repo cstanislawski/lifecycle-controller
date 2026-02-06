@@ -2,8 +2,8 @@ apiVersion: v2
 name: lifecycle-controller
 description: A Kubernetes controller to manage the lifecycle of standard resources through time-based annotations.
 type: application
-version: 0.2.6
-appVersion: "v0.2.6"
+version: 0.3.0
+appVersion: "v0.3.0"
 keywords:
   - kubernetes
   - controller
