@@ -30,7 +30,7 @@ spec:
 
 Scenario: A legacy application has a slow memory leak. To ensure stability, the operations team wants to restart it every night at 3:00 AM in their local timezone.
 
-Solution: Use the `restart-cron` and `timezone` annotations.
+Solution: Use the `restart-cron` and `cron-timezone` annotations.
 
 ```yaml
 apiVersion: apps/v1
@@ -40,7 +40,7 @@ metadata:
   namespace: production
   annotations:
     lifecycle.cezary.dev/restart-cron: "0 3 * * *" # Daily at 3:00 AM
-    lifecycle.cezary.dev/timezone: "America/New_York"
+    lifecycle.cezary.dev/cron-timezone: "America/New_York"
 spec:
   # ...
 ```
@@ -68,21 +68,22 @@ spec:
 The controller's behavior is configured entirely through annotations.
 
 - **For all resources:**
-  - `lifecycle.cezary.dev/timezone`: The timezone to use for all time-based annotations on the resource. Default is `UTC`. This timezone is used to interpret all datetime strings and cron expressions for this resource. In case an invalid timezone is provided, the controller will post a warning Event on the resource, and take no action.
   - `lifecycle.cezary.dev/reference-point`: (string) Specifies the starting point for relative duration timers (for `-after` annotations).
     - `applyTimestamp` (default): The timer starts when the controller processes the `-after` annotation. Re-applying the manifest resets the timer ("keep-alive" behavior).
     - `creationTimestamp`: The timer starts from the resource's creation time. This creates a fixed TTL that is not affected by subsequent updates.
-  - `lifecycle.cezary.dev/delete-at`: Absolute TTL. The controller deletes the resource at or after this specific date and time (e.g., `2024-12-31T23:59:59`).
-    - The value should be an ISO 8601 format timestamp. The timezone is determined by the `timezone` annotation.
+  - `lifecycle.cezary.dev/delete-at`: Absolute TTL. The controller deletes the resource at or after this specific date and time (e.g., `2024-12-31T23:59:59Z`).
+    - The value must be an RFC3339 timestamp with explicit timezone offset (`Z` or `±hh:mm`).
     - This can be applied directly to a `Namespace` to trigger its deletion. Kubernetes will handle the subsequent removal of all resources within that namespace.
   - `lifecycle.cezary.dev/delete-after`: Relative TTL (e.g., `5m`, `1h`, `3d`). The controller processes this annotation by calculating an absolute deletion time based on the time it first notices the annotation. It then adds a `lifecycle.cezary.dev/delete-at` annotation to the resource with this calculated time. To prevent re-calculation and make the state explicit, the original `lifecycle.cezary.dev/delete-after` annotation is then removed. **Supports `s`, `m`, `h`, and `d` (days).**
   - `lifecycle.cezary.dev/dry-run: "true"`: Per-resource dry-run annotation. The controller logs actions it would take without executing them.
 
 - **Only for pod-spawning resources (Deployments, StatefulSets, DaemonSets, etc.):**
   - `lifecycle.cezary.dev/restart-at`: Performs a one-time rolling restart at a specific date and time.
+    - The value must be an RFC3339 timestamp with explicit timezone offset (`Z` or `±hh:mm`).
   - `lifecycle.cezary.dev/restart-after`: Performs a one-time rolling restart after a relative duration (e.g., `1h`). The controller converts this to an absolute `restart-at` annotation. Supports `s`, `m`, `h`, and `d` (days).
   - `lifecycle.cezary.dev/restart-every`: Performs a rolling restart on a recurring, relative basis (e.g., `7d` to restart weekly). Supports `s`, `m`, `h`, and `d` (days).
   - `lifecycle.cezary.dev/restart-cron`: Performs a rolling restart based on a cron expression (e.g., `"0 3 * * *"` for daily at 3 AM).
+  - `lifecycle.cezary.dev/cron-timezone`: Optional timezone for `restart-cron` only. Must be valid IANA timezone (e.g., `America/New_York`). Defaults to `UTC`.
   - A resource is considered pod-spawning if it has a `spec.template.metadata.annotations` field. The restart mechanism works by patching this field, which is the standard Kubernetes pattern for triggering a rolling update.
 
 - **Restart Mechanism**
