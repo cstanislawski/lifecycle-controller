@@ -33,12 +33,7 @@ jobs:
           version: ${{ steps.get-helm-version.outputs.version }}
 
       - name: Install helm-unittest plugin
-        run: |
-          if helm plugin install --help | grep -q -- '--verify'; then
-            helm plugin install https://github.com/helm-unittest/helm-unittest --verify=false
-          else
-            helm plugin install https://github.com/helm-unittest/helm-unittest
-          fi
+        run: helm plugin install https://github.com/helm-unittest/helm-unittest --verify=false
 
       - name: Running Helm Unit Tests
         run: make helm-unittest HELM_CHART_PATH=${{ env.HELM_CHART_PATH }}
