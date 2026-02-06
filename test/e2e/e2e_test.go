@@ -508,15 +508,8 @@ spec:
 			}).WithTimeout(15 * time.Second).WithPolling(pollInterval).Should(Succeed())
 		})
 
-		It("should respect the 'timezone' annotation for a 'restart-at' action", func() {
-			// This test is sensitive to the execution time.
-			// We set a restart time 5 seconds in the future in a timezone far from UTC.
-			loc, err := time.LoadLocation("America/Los_Angeles")
-			Expect(err).NotTo(HaveOccurred())
-			restartTime := time.Now().In(loc).Add(5 * time.Second)
-			restartTimeStr := restartTime.Format(time.RFC3339)
-
-			deploymentName := "e2e-timezone"
+		It("should support cron-timezone for restart-cron", func() {
+			deploymentName := "e2e-cron-timezone"
 			deploymentYAML := fmt.Sprintf(`
 apiVersion: apps/v1
 kind: Deployment
@@ -524,23 +517,30 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/restart-at: "%s"
-    lifecycle.cezary.dev/timezone: "America/Los_Angeles"
+    lifecycle.cezary.dev/restart-cron: "* * * * *"
+    lifecycle.cezary.dev/cron-timezone: "America/Los_Angeles"
 spec:
   replicas: 1
   selector: { matchLabels: { app: test-timezone }}
   template:
     metadata: { labels: { app: test-timezone }}
     spec: { containers: [ { name: nginx, image: nginx:latest } ] }
-`, deploymentName, testNamespace, restartTimeStr)
+`, deploymentName, testNamespace)
 			utils.ApplyYAML(deploymentYAML)
 
-			By("verifying the deployment is restarted at the correct absolute time")
+			By("verifying the recurring restart state is initialized")
+			Eventually(func(g Gomega) {
+				dep := utils.GetDeployment(deploymentName, testNamespace, g)
+				_, found := dep.Annotations["lifecycle.cezary.dev/last-restart-timestamp"]
+				g.Expect(found).To(BeTrue())
+			}).WithTimeout(20 * time.Second).WithPolling(pollInterval).Should(Succeed())
+
+			By("verifying the deployment is restarted")
 			Eventually(func(g Gomega) {
 				dep := utils.GetDeployment(deploymentName, testNamespace, g)
 				_, found := dep.Spec.Template.Annotations["lifecycle.cezary.dev/restartedAt"]
 				g.Expect(found).To(BeTrue())
-			}).WithTimeout(20 * time.Second).WithPolling(pollInterval).Should(Succeed())
+			}).WithTimeout(90 * time.Second).WithPolling(pollInterval).Should(Succeed())
 		})
 	})
 

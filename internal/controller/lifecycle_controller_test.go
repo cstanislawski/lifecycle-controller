@@ -472,16 +472,16 @@ var _ = Describe("Lifecycle Controller", func() {
 			Expect(k8sClient.Delete(ctx, cm)).To(Succeed())
 		})
 
-		It("should not act and should record an event for an invalid timezone", func() {
-			By("Creating a deployment with an invalid timezone")
+		It("should not act and should record an event for an invalid cron-timezone", func() {
+			By("Creating a deployment with restart-cron and invalid cron-timezone")
 			ctx := context.Background()
-			key := types.NamespacedName{Name: "invalid-tz", Namespace: TestNamespace}
+			key := types.NamespacedName{Name: "invalid-cron-tz", Namespace: TestNamespace}
 			deployment := &appsv1.Deployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: key.Name, Namespace: key.Namespace,
 					Annotations: map[string]string{
-						DeleteAtAnnotation: "2099-01-01T00:00:00Z",
-						TimezoneAnnotation: "Invalid/Timezone",
+						RestartCronAnnotation:  "*/1 * * * *",
+						CronTimezoneAnnotation: "Invalid/Timezone",
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
@@ -501,6 +501,50 @@ var _ = Describe("Lifecycle Controller", func() {
 				found := false
 				for _, event := range eventList.Items {
 					if event.InvolvedObject.Name == key.Name && event.Reason == "InvalidTimezone" {
+						found = true
+						break
+					}
+				}
+				g.Expect(found).To(BeTrue())
+			}, Timeout, Interval).Should(Succeed())
+
+			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
+		})
+
+		It("should ignore cron-timezone when restart-cron is not set", func() {
+			By("Creating a deployment with restart-every and cron-timezone")
+			ctx := context.Background()
+			key := types.NamespacedName{Name: "ignored-cron-tz", Namespace: TestNamespace}
+			deployment := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: key.Name, Namespace: key.Namespace,
+					Annotations: map[string]string{
+						RestartEveryAnnotation: "24h",
+						CronTimezoneAnnotation: "Europe/Warsaw",
+					},
+				},
+				Spec: appsv1.DeploymentSpec{
+					Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "test"}},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "test"}},
+						Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "test", Image: "nginx"}}},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
+
+			Eventually(func(g Gomega) {
+				fetched := &appsv1.Deployment{}
+				g.Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
+				g.Expect(fetched.Annotations).To(HaveKey(LastRestartTimestamp))
+			}, Timeout, Interval).Should(Succeed())
+
+			Eventually(func(g Gomega) {
+				eventList := &corev1.EventList{}
+				g.Expect(k8sClient.List(ctx, eventList, client.InNamespace(TestNamespace))).To(Succeed())
+				found := false
+				for _, event := range eventList.Items {
+					if event.InvolvedObject.Name == key.Name && event.Reason == "IgnoredAnnotation" {
 						found = true
 						break
 					}
