@@ -1,0 +1,117 @@
+suite: RBAC watchResources parsing
+templates:
+  - templates/rbac.yaml
+
+tests:
+  - it: renders core resource with empty apiGroup
+    set:
+      controllerManager:
+        scope:
+          watchResources:
+            - configmaps
+    documentSelector:
+      path: kind
+      value: ClusterRole
+    asserts:
+      - equal:
+          path: rules[0].apiGroups[0]
+          value: ""
+      - equal:
+          path: rules[0].resources[0]
+          value: configmaps
+      - equal:
+          path: rules[0].verbs
+          value: ["delete", "get", "list", "patch", "update", "watch"]
+
+  - it: renders single-segment apiGroup
+    set:
+      controllerManager:
+        scope:
+          watchResources:
+            - deployments.apps
+    documentSelector:
+      path: kind
+      value: ClusterRole
+    asserts:
+      - equal:
+          path: rules[0].apiGroups[0]
+          value: apps
+      - equal:
+          path: rules[0].resources[0]
+          value: deployments
+
+  - it: renders dotted apiGroup fully
+    set:
+      controllerManager:
+        scope:
+          watchResources:
+            - ingresses.networking.k8s.io
+    documentSelector:
+      path: kind
+      value: ClusterRole
+    asserts:
+      - equal:
+          path: rules[0].apiGroups[0]
+          value: networking.k8s.io
+      - equal:
+          path: rules[0].resources[0]
+          value: ingresses
+
+  - it: renders one watch rule per entry
+    set:
+      controllerManager:
+        scope:
+          watchResources:
+            - configmaps
+            - ingresses.networking.k8s.io
+    documentSelector:
+      path: kind
+      value: ClusterRole
+    asserts:
+      - equal:
+          path: rules[0].apiGroups[0]
+          value: ""
+      - equal:
+          path: rules[0].resources[0]
+          value: configmaps
+      - equal:
+          path: rules[1].apiGroups[0]
+          value: networking.k8s.io
+      - equal:
+          path: rules[1].resources[0]
+          value: ingresses
+      - equal:
+          path: rules[2].resources[0]
+          value: events
+
+  - it: keeps wildcard rule when watchResources empty
+    documentSelector:
+      path: kind
+      value: ClusterRole
+    asserts:
+      - equal:
+          path: rules[0].apiGroups[0]
+          value: "*"
+      - equal:
+          path: rules[0].resources[0]
+          value: "*"
+
+  - it: fails on malformed value with empty resource segment
+    set:
+      controllerManager:
+        scope:
+          watchResources:
+            - .apps
+    asserts:
+      - failedTemplate:
+          errorPattern: "invalid controllerManager.scope.watchResources entry"
+
+  - it: fails on malformed value with empty apiGroup segment
+    set:
+      controllerManager:
+        scope:
+          watchResources:
+            - deployments..apps
+    asserts:
+      - failedTemplate:
+          errorPattern: "invalid controllerManager.scope.watchResources entry"

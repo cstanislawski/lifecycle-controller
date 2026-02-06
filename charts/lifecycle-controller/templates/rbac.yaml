@@ -11,9 +11,16 @@ rules:
   {{- range .Values.controllerManager.scope.watchResources }}
   {{- $parts := splitList "." . }}
   {{- $res := index $parts 0 }}
+  {{- if eq $res "" }}
+    {{- fail (printf "invalid controllerManager.scope.watchResources entry %q: resource segment cannot be empty" .) }}
+  {{- end }}
   {{- $grp := "" }}
   {{- if gt (len $parts) 1 }}
-    {{- $grp = index $parts 1 }}
+    {{- $rest := rest $parts }}
+    {{- if has "" $rest }}
+      {{- fail (printf "invalid controllerManager.scope.watchResources entry %q: apiGroup segments cannot be empty" .) }}
+    {{- end }}
+    {{- $grp = join "." $rest }}
   {{- end }}
 - apiGroups: ["{{ $grp }}"]
   resources: ["{{ $res }}"]

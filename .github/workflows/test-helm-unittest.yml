@@ -1,0 +1,39 @@
+name: Helm Unit Tests
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    paths:
+      - 'charts/**'
+      - 'Makefile'
+      - '.github/workflows/test-helm-unittest.yml'
+
+env:
+  HELM_CHART_PATH: charts/lifecycle-controller
+
+jobs:
+  helm-unittest:
+    name: Run on Ubuntu
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v6
+
+      - name: Get helm version from file
+        id: get-helm-version
+        run: |
+          echo "version=$(head ${{ env.HELM_CHART_PATH }}/.Version)" >> $GITHUB_OUTPUT
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ steps.get-helm-version.outputs.version }}
+
+      - name: Install helm-unittest plugin
+        run: helm plugin install https://github.com/helm-unittest/helm-unittest --verify=false
+
+      - name: Running Helm Unit Tests
+        run: make helm-unittest HELM_CHART_PATH=${{ env.HELM_CHART_PATH }}
