@@ -277,6 +277,10 @@ helm-lint: ## Lint the Helm chart.
 helm-template: ## Validate the Helm chart by rendering its templates.
 	helm template lifecycle-controller ./$(HELM_CHART_PATH) --debug > /dev/null
 
+.PHONY: helm-unittest
+helm-unittest: ## Run Helm unit tests.
+	helm unittest ./$(HELM_CHART_PATH)
+
 .PHONY: deploy-helm
 deploy-helm: docker-build kind-load ## Deploy controller using Helm to the K8s cluster specified in ~/.kube/config. Builds and loads image.
 	@img="$(IMG)"; \
