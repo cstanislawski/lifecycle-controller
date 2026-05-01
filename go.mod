@@ -1,6 +1,6 @@
 module github.com/cstanislawski/lifecycle-controller
 
-go 1.24.5
+go 1.26.2
 
 require (
 	github.com/go-logr/logr v1.4.3
