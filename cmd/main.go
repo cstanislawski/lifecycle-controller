@@ -2,9 +2,11 @@ package main
 
 import (
 	"crypto/tls"
+	"errors"
 	"flag"
 	"os"
 	"strings"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -63,6 +65,8 @@ func main() {
 	var watchResources, ignoreResources arrayFlags
 	var watchNamespaces, ignoreNamespaces arrayFlags
 	var globalDryRun bool
+	var maxTTLStr string
+	var maxTTLExceeded string
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -91,6 +95,10 @@ func main() {
 	flag.Var(&ignoreNamespaces, "ignore-namespace", "Glob pattern for namespaces to ignore. Can be repeated.")
 	flag.BoolVar(&globalDryRun, "dry-run", false,
 		"Enable dry-run mode for all resources. When set, actions are logged but not executed.")
+	flag.StringVar(&maxTTLStr, "max-ttl", "",
+		"Maximum allowed delete-after TTL. Empty disables the limit. Supports s, m, h, and d (days).")
+	flag.StringVar(&maxTTLExceeded, "max-ttl-exceeded", string(controller.MaxTTLExceededReject),
+		"Action when delete-after exceeds --max-ttl. Valid values: reject, warn, ignore, clamp.")
 
 	opts := zap.Options{}
 
@@ -98,6 +106,24 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	var maxTTL time.Duration
+	if maxTTLStr != "" {
+		parsedMaxTTL, err := controller.ParseExtendedDuration(maxTTLStr)
+		if err != nil {
+			setupLog.Error(err, "invalid max-ttl value", "value", maxTTLStr)
+			os.Exit(1)
+		}
+		if parsedMaxTTL <= 0 {
+			setupLog.Error(errors.New("invalid max-ttl"), "max-ttl must be greater than zero", "value", maxTTLStr)
+			os.Exit(1)
+		}
+		maxTTL = parsedMaxTTL
+	}
+	if !controller.IsValidMaxTTLExceededAction(maxTTLExceeded) {
+		setupLog.Error(errors.New("invalid max-ttl-exceeded"), "invalid max-ttl-exceeded value", "value", maxTTLExceeded, "validValues", "reject,warn,ignore,clamp")
+		os.Exit(1)
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -204,13 +230,19 @@ func main() {
 		"ignoreNamespaces", ignoreNamespaces,
 	)
 	setupLog.Info("Global dry-run mode", "enabled", globalDryRun)
+	setupLog.Info("Max TTL configuration",
+		"maxTTL", maxTTLStr,
+		"maxTTLExceeded", maxTTLExceeded,
+	)
 
 	if err := (&controller.LifecycleReconciler{
-		Client:       mgr.GetClient(),
-		Scheme:       mgr.GetScheme(),
-		Config:       scopeConfig,
-		GlobalDryRun: globalDryRun,
-		Recorder:     mgr.GetEventRecorderFor("lifecycle-controller"),
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		Config:         scopeConfig,
+		GlobalDryRun:   globalDryRun,
+		MaxTTL:         maxTTL,
+		MaxTTLExceeded: controller.MaxTTLExceededAction(maxTTLExceeded),
+		Recorder:       mgr.GetEventRecorderFor("lifecycle-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Lifecycle")
 		os.Exit(1)

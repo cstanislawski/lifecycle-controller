@@ -142,6 +142,12 @@ The controller supports glob-style patterns for filtering resources and namespac
 - `--watch-namespace` - (Repeatable) Glob pattern for namespaces to watch (e.g. `default`, `dev-*`).
   - Strict Scoping: If provided, the controller will **only** watch resources inside matching namespaces. It will **automatically exclude** cluster-scoped resources (like `Nodes`) with the exception of `Namespace` objects themselves, provided their name matches the pattern.
 - `--ignore-namespace` - (Repeatable) Glob pattern for namespaces to strictly ignore. Takes precedence over watch rules.
+- `--max-ttl` - Maximum allowed `delete-after` TTL. Empty by default, which disables the limit. Supports `s`, `m`, `h`, and `d` (days), for example `30d`.
+- `--max-ttl-exceeded` - Action when `delete-after` exceeds `--max-ttl`. Valid values:
+  - `reject` (default): treat the annotation as invalid and do not schedule deletion.
+  - `warn`: accept the oversized TTL and emit a warning Event.
+  - `ignore`: behave as if `delete-after` is absent and emit a warning Event.
+  - `clamp`: schedule deletion at `--max-ttl` instead of the requested TTL and emit a warning Event.
 
 ### Examples
 
@@ -156,6 +162,21 @@ Watch everything except secrets and anything in `kube-system`:
 ```bash
 --ignore-resource=secrets --ignore-namespace=kube-system
 ```
+
+Reject resources that request deletion TTLs longer than 30 days:
+
+```bash
+--max-ttl=30d --max-ttl-exceeded=reject
+```
+
+With `--max-ttl=30d`, a resource annotated with `lifecycle.cezary.dev/delete-after: "45d"` behaves as follows:
+
+| Mode | Result |
+|---|---|
+| `reject` | No deletion is scheduled; the annotation is treated as invalid. |
+| `warn` | Deletion is scheduled after 45 days and a warning Event is emitted. |
+| `ignore` | No deletion is scheduled from `delete-after`; a warning Event is emitted. |
+| `clamp` | Deletion is scheduled after 30 days and a warning Event is emitted. |
 
 ## Deployment
 

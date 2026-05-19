@@ -102,6 +102,65 @@ var _ = Describe("Lifecycle Controller", func() {
 			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
 		})
 
+		DescribeTable("should apply max TTL policy when delete-after exceeds the configured limit",
+			func(action MaxTTLExceededAction, expectDeleteAt bool, expectedDuration time.Duration) {
+				Reconciler.MaxTTL = 24 * time.Hour
+				Reconciler.MaxTTLExceeded = action
+				DeferCleanup(func() {
+					Reconciler.MaxTTL = 0
+					Reconciler.MaxTTLExceeded = ""
+				})
+
+				ctx := context.Background()
+				deploymentName := "test-max-ttl-" + string(action)
+				deployment := &appsv1.Deployment{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      deploymentName,
+						Namespace: TestNamespace,
+						Annotations: map[string]string{
+							DeleteAfterAnnotation: "48h",
+						},
+					},
+					Spec: appsv1.DeploymentSpec{
+						Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "test"}},
+						Template: corev1.PodTemplateSpec{
+							ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "test"}},
+							Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "test", Image: "nginx"}}},
+						},
+					},
+				}
+				Expect(k8sClient.Create(ctx, deployment)).Should(Succeed())
+
+				if expectDeleteAt {
+					Eventually(func(g Gomega) {
+						fetched := &appsv1.Deployment{}
+						g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: TestNamespace}, fetched)).To(Succeed())
+						ann := fetched.GetAnnotations()
+						g.Expect(ann).To(HaveKey(DeleteAtAnnotation))
+						g.Expect(ann).ToNot(HaveKey(DeleteAfterAnnotation))
+
+						deleteAtTime, err := time.Parse(time.RFC3339, ann[DeleteAtAnnotation])
+						g.Expect(err).NotTo(HaveOccurred())
+						g.Expect(deleteAtTime).To(BeTemporally("~", time.Now().Add(expectedDuration), time.Minute))
+					}, Timeout, Interval).Should(Succeed())
+				} else {
+					Consistently(func(g Gomega) {
+						fetched := &appsv1.Deployment{}
+						g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: TestNamespace}, fetched)).To(Succeed())
+						ann := fetched.GetAnnotations()
+						g.Expect(ann).To(HaveKeyWithValue(DeleteAfterAnnotation, "48h"))
+						g.Expect(ann).ToNot(HaveKey(DeleteAtAnnotation))
+					}, time.Second, Interval).Should(Succeed())
+				}
+
+				Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
+			},
+			Entry("rejects oversized delete-after", MaxTTLExceededReject, false, time.Duration(0)),
+			Entry("warns and accepts oversized delete-after", MaxTTLExceededWarn, true, 48*time.Hour),
+			Entry("ignores oversized delete-after", MaxTTLExceededIgnore, false, time.Duration(0)),
+			Entry("clamps oversized delete-after", MaxTTLExceededClamp, true, 24*time.Hour),
+		)
+
 		It("should delete a resource when 'delete-at' is in the past", func() {
 			By("Creating a new Deployment with a past delete-at annotation")
 			ctx := context.Background()

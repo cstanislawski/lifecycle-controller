@@ -44,6 +44,24 @@ const (
 	ReferencePointCreationTimestamp = "creationTimestamp"
 )
 
+type MaxTTLExceededAction string
+
+const (
+	MaxTTLExceededReject MaxTTLExceededAction = "reject"
+	MaxTTLExceededWarn   MaxTTLExceededAction = "warn"
+	MaxTTLExceededIgnore MaxTTLExceededAction = "ignore"
+	MaxTTLExceededClamp  MaxTTLExceededAction = "clamp"
+)
+
+func IsValidMaxTTLExceededAction(action string) bool {
+	switch MaxTTLExceededAction(action) {
+	case MaxTTLExceededReject, MaxTTLExceededWarn, MaxTTLExceededIgnore, MaxTTLExceededClamp:
+		return true
+	default:
+		return false
+	}
+}
+
 // ResourceScope holds the GVK and scope information for a discovered resource.
 type ResourceScope struct {
 	GVK          schema.GroupVersionKind
@@ -58,13 +76,15 @@ type LifecycleReconciler struct {
 	KnownResources []ResourceScope
 	Config         ScopeConfig
 	GlobalDryRun   bool
+	MaxTTL         time.Duration
+	MaxTTLExceeded MaxTTLExceededAction
 }
 
 // +kubebuilder:rbac:groups=*,resources=*,verbs=get;list;watch;delete;update;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
-// parseExtendedDuration enhances time.ParseDuration to support 'd' for days.
-func parseExtendedDuration(durationStr string) (time.Duration, error) {
+// ParseExtendedDuration enhances time.ParseDuration to support 'd' for days.
+func ParseExtendedDuration(durationStr string) (time.Duration, error) {
 	// Regex to find number and unit, specifically looking for 'd'
 	re := regexp.MustCompile(`(\d+)\s*d`)
 	matches := re.FindAllStringSubmatch(durationStr, -1)
@@ -229,10 +249,14 @@ func (r *LifecycleReconciler) handleDeletion(ctx context.Context, obj *unstructu
 			return ctrl.Result{Requeue: true}, nil
 		}
 
-		duration, err := parseExtendedDuration(deleteAfterStr)
+		duration, err := ParseExtendedDuration(deleteAfterStr)
 		if err != nil {
 			logger.Error(err, "invalid duration format for delete-after annotation", "value", deleteAfterStr)
 			r.Recorder.Eventf(obj, "Warning", "InvalidAnnotation", "Invalid format for delete-after annotation: %v", err)
+			return ctrl.Result{}, nil
+		}
+		duration, ok := r.applyMaxTTLPolicy(obj, DeleteAfterAnnotation, deleteAfterStr, duration, logger)
+		if !ok {
 			return ctrl.Result{}, nil
 		}
 		referenceTime := r.getReferenceTime(obj, logger)
@@ -289,6 +313,41 @@ func (r *LifecycleReconciler) handleDeletion(ctx context.Context, obj *unstructu
 	return ctrl.Result{}, nil
 }
 
+func (r *LifecycleReconciler) applyMaxTTLPolicy(obj client.Object, annotation, value string, duration time.Duration, logger logr.Logger) (time.Duration, bool) {
+	if r.MaxTTL <= 0 || duration <= r.MaxTTL {
+		return duration, true
+	}
+
+	action := r.MaxTTLExceeded
+	if action == "" {
+		action = MaxTTLExceededReject
+	}
+
+	message := fmt.Sprintf("%s duration %s exceeds configured max TTL %s", annotation, value, r.MaxTTL)
+	switch action {
+	case MaxTTLExceededWarn:
+		logger.Info("Max TTL exceeded; accepting annotation", "annotation", annotation, "value", value, "duration", duration, "maxTTL", r.MaxTTL)
+		r.Recorder.Event(obj, "Warning", "MaxTTLExceeded", message)
+		return duration, true
+	case MaxTTLExceededIgnore:
+		logger.Info("Max TTL exceeded; ignoring annotation", "annotation", annotation, "value", value, "duration", duration, "maxTTL", r.MaxTTL)
+		r.Recorder.Event(obj, "Warning", "MaxTTLExceeded", message+"; ignoring annotation")
+		return 0, false
+	case MaxTTLExceededClamp:
+		logger.Info("Max TTL exceeded; clamping duration", "annotation", annotation, "value", value, "duration", duration, "maxTTL", r.MaxTTL)
+		r.Recorder.Event(obj, "Warning", "MaxTTLExceeded", message+"; clamping to max TTL")
+		return r.MaxTTL, true
+	case MaxTTLExceededReject:
+		logger.Info("Max TTL exceeded; rejecting annotation", "annotation", annotation, "value", value, "duration", duration, "maxTTL", r.MaxTTL)
+		r.Recorder.Event(obj, "Warning", "MaxTTLExceeded", message+"; rejecting annotation")
+		return 0, false
+	default:
+		logger.Info("Invalid max TTL exceeded action; rejecting annotation", "action", action)
+		r.Recorder.Eventf(obj, "Warning", "InvalidConfiguration", "Invalid max TTL exceeded action %q; rejecting %s", action, annotation)
+		return 0, false
+	}
+}
+
 // handleRestart implements the full restart logic with precedence.
 func (r *LifecycleReconciler) handleRestart(ctx context.Context, obj *unstructured.Unstructured, isDryRun bool, logger logr.Logger) (ctrl.Result, error) {
 	_, found, err := unstructured.NestedFieldNoCopy(obj.Object, "spec", "template")
@@ -314,7 +373,7 @@ func (r *LifecycleReconciler) handleRestart(ctx context.Context, obj *unstructur
 			return ctrl.Result{Requeue: true}, nil
 		}
 
-		duration, err := parseExtendedDuration(restartAfterStr)
+		duration, err := ParseExtendedDuration(restartAfterStr)
 		if err != nil {
 			logger.Error(err, "invalid duration format for restart-after annotation", "value", restartAfterStr)
 			r.Recorder.Eventf(obj, "Warning", "InvalidAnnotation", "Invalid format for restart-after annotation: %v", err)
@@ -389,7 +448,7 @@ func (r *LifecycleReconciler) handleRestart(ctx context.Context, obj *unstructur
 	}
 
 	if everyStr := annotations[RestartEveryAnnotation]; everyStr != "" {
-		duration, err := parseExtendedDuration(everyStr)
+		duration, err := ParseExtendedDuration(everyStr)
 		if err != nil {
 			logger.Error(err, "invalid duration for restart-every", "duration", everyStr)
 			r.Recorder.Eventf(obj, "Warning", "InvalidAnnotation", "Invalid duration for restart-every: %v", err)
