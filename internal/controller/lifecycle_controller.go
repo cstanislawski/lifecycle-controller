@@ -60,7 +60,8 @@ type LifecycleReconciler struct {
 	GlobalDryRun   bool
 }
 
-// +kubebuilder:rbac:groups=*,resources=*,verbs=get;list;watch;delete;update;patch
+// +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets;daemonsets,verbs=get;list;watch;delete;update;patch
+// +kubebuilder:rbac:groups=batch,resources=jobs;cronjobs,verbs=get;list;watch;delete;update;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // parseExtendedDuration enhances time.ParseDuration to support 'd' for days.

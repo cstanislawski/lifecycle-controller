@@ -129,7 +129,7 @@ For time-critical operations or to set a fixed expiration that does not change o
 
 ## Scope & Permissions
 
-By default, the controller discovers and watches **all** available resources (`*.*`) across **all** namespaces. In production or multi-tenant environments, you may want to restrict this scope to improve security and performance.
+By default, the standalone controller discovers available resources across all namespaces, but it excludes protected resource types unless you provide an explicit resource allowlist or ignore list. The Helm chart is stricter by default: it watches only common workload controllers and generates matching non-wildcard RBAC.
 
 The controller supports glob-style patterns for filtering resources and namespaces via command-line flags (or Helm values).
 
@@ -137,8 +137,9 @@ The controller supports glob-style patterns for filtering resources and namespac
 
 - `--watch-resource` - (Repeatable) Glob pattern for resources to watch.
   - Format: `<resource>.<group>` (e.g. `deployments.apps`, `pods`, `*.k8s.io`).
-  - If not provided, all resources are watched (unless excluded by ignore rules).
+  - If not provided, all unprotected resources are watched (unless excluded by ignore rules).
 - `--ignore-resource` - (Repeatable) Glob pattern for resources to strictly ignore. Takes precedence over watch rules.
+  - If neither `--watch-resource` nor `--ignore-resource` is provided, the controller ignores: `secrets`, `serviceaccounts`, `roles.rbac.authorization.k8s.io`, `rolebindings.rbac.authorization.k8s.io`, `clusterroles.rbac.authorization.k8s.io`, `clusterrolebindings.rbac.authorization.k8s.io`, `nodes`, `persistentvolumes`, `storageclasses.storage.k8s.io`, and `customresourcedefinitions.apiextensions.k8s.io`.
 - `--watch-namespace` - (Repeatable) Glob pattern for namespaces to watch (e.g. `default`, `dev-*`).
   - Strict Scoping: If provided, the controller will **only** watch resources inside matching namespaces. It will **automatically exclude** cluster-scoped resources (like `Nodes`) with the exception of `Namespace` objects themselves, provided their name matches the pattern.
 - `--ignore-namespace` - (Repeatable) Glob pattern for namespaces to strictly ignore. Takes precedence over watch rules.
@@ -157,6 +158,12 @@ Watch everything except secrets and anything in `kube-system`:
 --ignore-resource=secrets --ignore-namespace=kube-system
 ```
 
+Opt into all core and named API groups:
+
+```bash
+--watch-resource='*' --watch-resource='*.*'
+```
+
 ## Deployment
 
 `lifecycle-controller` is both as:
@@ -166,9 +173,9 @@ Watch everything except secrets and anything in `kube-system`:
 
 ### A Note on Permissions (RBAC)
 
-By default, the controller generates a `ClusterRole` with wildcard (`*`) permissions for `resources` and `apiGroups`. This allows it to dynamically discover and manage any resource type.
+By default, the Helm chart generates a `ClusterRole` for common workload controllers only: `deployments.apps`, `statefulsets.apps`, `daemonsets.apps`, `jobs.batch`, and `cronjobs.batch`. This avoids wildcard (`*`) production access.
 
-When installing via Helm, if you configure the `scope.watchResources` value, the chart will automatically restrict the generated `ClusterRole` to only contain permissions for those specific resources. This ensures the controller operates with the Principle of Least Privilege.
+When installing via Helm, if you configure the `scope.watchResources` value, the chart will automatically restrict the generated `ClusterRole` to only contain permissions for those specific resources. The chart also defaults `scope.ignoreResources` to the protected resource list above. Clear `scope.ignoreResources` only when you intentionally want the controller to manage one of those resource types.
 
 If you are running the binary manually or managing RBAC yourself, you should ensure your `ClusterRole` permissions match the resources you intend to manage.
 
@@ -195,4 +202,15 @@ controllerManager:
     watchNamespaces:
       - "default"
       - "dev-*"
+```
+
+To opt into wildcard RBAC with Helm, set both core and named API group patterns and clear the protected ignore list:
+
+```yaml
+controllerManager:
+  scope:
+    watchResources:
+      - "*"
+      - "*.*"
+    ignoreResources: []
 ```

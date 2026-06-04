@@ -196,12 +196,15 @@ func main() {
 		WatchNamespaces:  watchNamespaces,
 		IgnoreNamespaces: ignoreNamespaces,
 	}
+	if len(scopeConfig.WatchResources) == 0 && len(scopeConfig.IgnoreResources) == 0 {
+		scopeConfig.IgnoreResources = controller.DefaultIgnoreResources()
+	}
 
 	setupLog.Info("Starting with scope configuration",
-		"watchResources", watchResources,
-		"ignoreResources", ignoreResources,
-		"watchNamespaces", watchNamespaces,
-		"ignoreNamespaces", ignoreNamespaces,
+		"watchResources", scopeConfig.WatchResources,
+		"ignoreResources", scopeConfig.IgnoreResources,
+		"watchNamespaces", scopeConfig.WatchNamespaces,
+		"ignoreNamespaces", scopeConfig.IgnoreNamespaces,
 	)
 	setupLog.Info("Global dry-run mode", "enabled", globalDryRun)
 

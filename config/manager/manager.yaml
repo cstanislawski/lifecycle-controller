@@ -63,6 +63,21 @@ spec:
         args:
           - --leader-elect
           - --health-probe-bind-address=:8081
+          - --watch-resource=deployments.apps
+          - --watch-resource=statefulsets.apps
+          - --watch-resource=daemonsets.apps
+          - --watch-resource=jobs.batch
+          - --watch-resource=cronjobs.batch
+          - --ignore-resource=secrets
+          - --ignore-resource=serviceaccounts
+          - --ignore-resource=roles.rbac.authorization.k8s.io
+          - --ignore-resource=rolebindings.rbac.authorization.k8s.io
+          - --ignore-resource=clusterroles.rbac.authorization.k8s.io
+          - --ignore-resource=clusterrolebindings.rbac.authorization.k8s.io
+          - --ignore-resource=nodes
+          - --ignore-resource=persistentvolumes
+          - --ignore-resource=storageclasses.storage.k8s.io
+          - --ignore-resource=customresourcedefinitions.apiextensions.k8s.io
         image: controller:latest
         name: manager
         ports: []

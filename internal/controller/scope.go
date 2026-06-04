@@ -17,6 +17,25 @@ type ScopeConfig struct {
 	IgnoreNamespaces []string
 }
 
+var defaultIgnoreResources = []string{
+	"secrets",
+	"serviceaccounts",
+	"roles.rbac.authorization.k8s.io",
+	"rolebindings.rbac.authorization.k8s.io",
+	"clusterroles.rbac.authorization.k8s.io",
+	"clusterrolebindings.rbac.authorization.k8s.io",
+	"nodes",
+	"persistentvolumes",
+	"storageclasses.storage.k8s.io",
+	"customresourcedefinitions.apiextensions.k8s.io",
+}
+
+// DefaultIgnoreResources returns resource patterns ignored when no resource
+// allowlist or ignore list is configured.
+func DefaultIgnoreResources() []string {
+	return append([]string(nil), defaultIgnoreResources...)
+}
+
 // matches checks if value matches any of the glob patterns.
 func matches(patterns []string, value string) bool {
 	for _, p := range patterns {
@@ -25,6 +44,13 @@ func matches(patterns []string, value string) bool {
 		}
 	}
 	return false
+}
+
+func (c *ScopeConfig) effectiveIgnoreResources() []string {
+	if len(c.WatchResources) == 0 && len(c.IgnoreResources) == 0 {
+		return defaultIgnoreResources
+	}
+	return c.IgnoreResources
 }
 
 // IsResourceAllowed determines if a specific GVK should be watched.
@@ -37,7 +63,8 @@ func (c *ScopeConfig) IsResourceAllowed(resource, group string) bool {
 	}
 
 	// 1. Explicit Ignore takes precedence
-	if len(c.IgnoreResources) > 0 && matches(c.IgnoreResources, key) {
+	ignoreResources := c.effectiveIgnoreResources()
+	if len(ignoreResources) > 0 && matches(ignoreResources, key) {
 		return false
 	}
 

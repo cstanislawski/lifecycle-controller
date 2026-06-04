@@ -62,10 +62,27 @@ controllerManager:
   # Scoping Configuration
   # Defines which resources and namespaces the controller should watch.
   scope:
-    # List of glob patterns for resources to watch (e.g. ["deployments.apps", "pods", "*.k8s.io"])
-    watchResources: []
-    # List of glob patterns for resources to ignore
-    ignoreResources: []
+    # List of glob patterns for resources to watch.
+    # The default is intentionally limited so the generated RBAC avoids wildcard production access.
+    # Set to ["*", "*.*"] and clear ignoreResources only when cluster-wide access is intended.
+    watchResources:
+      - deployments.apps
+      - statefulsets.apps
+      - daemonsets.apps
+      - jobs.batch
+      - cronjobs.batch
+    # List of glob patterns for resources to ignore. These protected resources are excluded by default.
+    ignoreResources:
+      - secrets
+      - serviceaccounts
+      - roles.rbac.authorization.k8s.io
+      - rolebindings.rbac.authorization.k8s.io
+      - clusterroles.rbac.authorization.k8s.io
+      - clusterrolebindings.rbac.authorization.k8s.io
+      - nodes
+      - persistentvolumes
+      - storageclasses.storage.k8s.io
+      - customresourcedefinitions.apiextensions.k8s.io
     # List of glob patterns for namespaces to watch (e.g. ["default", "dev-*"])
     watchNamespaces: []
     # List of glob patterns for namespaces to ignore

@@ -1,0 +1,52 @@
+suite: Deployment scope defaults
+templates:
+  - templates/deployment.yaml
+
+tests:
+  - it: passes production-safe default resource scope args
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --watch-resource=deployments.apps
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --watch-resource=statefulsets.apps
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --watch-resource=daemonsets.apps
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --watch-resource=jobs.batch
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --watch-resource=cronjobs.batch
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --ignore-resource=secrets
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --ignore-resource=serviceaccounts
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --ignore-resource=roles.rbac.authorization.k8s.io
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --ignore-resource=rolebindings.rbac.authorization.k8s.io
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --ignore-resource=clusterroles.rbac.authorization.k8s.io
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --ignore-resource=clusterrolebindings.rbac.authorization.k8s.io
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --ignore-resource=nodes
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --ignore-resource=persistentvolumes
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --ignore-resource=storageclasses.storage.k8s.io
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --ignore-resource=customresourcedefinitions.apiextensions.k8s.io
