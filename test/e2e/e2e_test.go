@@ -29,6 +29,7 @@ const pollInterval = 250 * time.Millisecond
 
 var _ = Describe("Lifecycle Controller E2E", Ordered, func() {
 	var controllerPodName string
+	testNamespace := managerNamespace
 
 	BeforeAll(func() {
 		By("creating manager namespace")
@@ -106,8 +107,6 @@ var _ = Describe("Lifecycle Controller E2E", Ordered, func() {
 	})
 
 	Context("Lifecycle Actions", func() {
-		testNamespace := managerNamespace
-
 		BeforeEach(func() {
 			if testNamespace == managerNamespace {
 				return
