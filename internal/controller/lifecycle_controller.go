@@ -39,6 +39,8 @@ const (
 	RestartEveryAnnotation          = "lifecycle.cezary.dev/restart-every"
 	LastRestartTimestamp            = "lifecycle.cezary.dev/last-restart-timestamp"
 	RestartedAtTemplate             = "lifecycle.cezary.dev/restartedAt"
+	ManagedByAnnotation             = "lifecycle.cezary.dev/managed-by"
+	ManagedByValue                  = "lifecycle-controller"
 	ReferencePointCreationTimestamp = "creationTimestamp"
 )
 
@@ -121,6 +123,15 @@ func (r *LifecycleReconciler) getReferenceTime(obj client.Object, logger logr.Lo
 		r.Recorder.Eventf(obj, "Warning", "InvalidAnnotationValue", "Invalid value for %s: '%s', falling back to 'applyTimestamp'", ReferencePointAnnotation, referencePoint)
 		return time.Now().UTC()
 	}
+}
+
+func markManagedBy(obj client.Object) {
+	annotations := obj.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	annotations[ManagedByAnnotation] = ManagedByValue
+	obj.SetAnnotations(annotations)
 }
 
 func (r *LifecycleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -210,6 +221,7 @@ func (r *LifecycleReconciler) handleDeletion(ctx context.Context, obj *unstructu
 			logger.Info("Ignoring delete-after because delete-at is already set with creationTimestamp reference point")
 			delete(annotations, DeleteAfterAnnotation)
 			obj.SetAnnotations(annotations)
+			markManagedBy(obj)
 			if err := r.Update(ctx, obj); err != nil {
 				logger.Error(err, "failed to remove redundant delete-after annotation")
 				return ctrl.Result{}, err
@@ -234,6 +246,7 @@ func (r *LifecycleReconciler) handleDeletion(ctx context.Context, obj *unstructu
 		newAnnotations[DeleteAtAnnotation] = deletionTime.UTC().Format(time.RFC3339)
 		delete(newAnnotations, DeleteAfterAnnotation)
 		obj.SetAnnotations(newAnnotations)
+		markManagedBy(obj)
 
 		if err := r.Update(ctx, obj); err != nil {
 			logger.Error(err, "failed to update object with delete-at annotation")
@@ -293,6 +306,7 @@ func (r *LifecycleReconciler) handleRestart(ctx context.Context, obj *unstructur
 			logger.Info("Ignoring restart-after because restart-at is already set with creationTimestamp reference point")
 			delete(annotations, RestartAfterAnnotation)
 			obj.SetAnnotations(annotations)
+			markManagedBy(obj)
 			if err := r.Update(ctx, obj); err != nil {
 				logger.Error(err, "failed to remove redundant restart-after annotation")
 				return ctrl.Result{}, err
@@ -317,6 +331,7 @@ func (r *LifecycleReconciler) handleRestart(ctx context.Context, obj *unstructur
 		newAnnotations[RestartAtAnnotation] = restartTime.UTC().Format(time.RFC3339)
 		delete(newAnnotations, RestartAfterAnnotation)
 		obj.SetAnnotations(newAnnotations)
+		markManagedBy(obj)
 		if err := r.Update(ctx, obj); err != nil {
 			logger.Error(err, "failed to update object with restart-at annotation")
 			return ctrl.Result{}, err
@@ -339,6 +354,7 @@ func (r *LifecycleReconciler) handleRestart(ctx context.Context, obj *unstructur
 			if !isDryRun {
 				delete(annotations, RestartAtAnnotation)
 				obj.SetAnnotations(annotations)
+				markManagedBy(obj)
 				if err := r.Update(ctx, obj); err != nil {
 					logger.Error(err, "failed to remove restart-at annotation")
 					return ctrl.Result{}, err
@@ -396,6 +412,7 @@ func (r *LifecycleReconciler) reconcileRecurringRestart(ctx context.Context, obj
 		if !isDryRun {
 			annotations[LastRestartTimestamp] = now.UTC().Format(time.RFC3339)
 			obj.SetAnnotations(annotations)
+			markManagedBy(obj)
 			if err := r.Update(ctx, obj); err != nil {
 				logger.Error(err, "failed to initialize last-restart-timestamp")
 				return ctrl.Result{}, err
@@ -426,6 +443,7 @@ func (r *LifecycleReconciler) reconcileRecurringRestart(ctx context.Context, obj
 		if !isDryRun {
 			annotations[LastRestartTimestamp] = nextScheduledRestart.Format(time.RFC3339)
 			obj.SetAnnotations(annotations)
+			markManagedBy(obj)
 			if err := r.Update(ctx, obj); err != nil {
 				logger.Error(err, "failed to update last-restart-timestamp after restart")
 				return ctrl.Result{}, err
@@ -461,12 +479,14 @@ func (r *LifecycleReconciler) triggerRestart(ctx context.Context, obj *unstructu
 	}
 
 	templateAnnotations[RestartedAtTemplate] = restartedAtTime
+	templateAnnotations[ManagedByAnnotation] = ManagedByValue
 	err = unstructured.SetNestedStringMap(obj.Object, templateAnnotations, "spec", "template", "metadata", "annotations")
 	if err != nil {
 		logger.Error(err, "failed to set restartedAt annotation on pod template")
 		r.Recorder.Eventf(obj, "Warning", "RestartFailed", "Could not set pod template annotations: %v", err)
 		return err
 	}
+	markManagedBy(obj)
 
 	if err := r.Update(ctx, obj); err != nil {
 		logger.Error(err, "failed to update object to trigger restart")
