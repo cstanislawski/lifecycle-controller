@@ -57,15 +57,24 @@ var _ = Describe("Lifecycle Controller E2E", Ordered, func() {
 			g.Expect(controllerDeployment).NotTo(BeEmpty())
 		}).WithTimeout(2 * time.Minute).WithPolling(pollInterval).Should(Succeed())
 
-		By("enabling namespace watches required by this suite")
+		By("granting broad test-only RBAC required by this suite")
+		cmd = exec.Command(
+			"kubectl", "patch", "clusterrole", "lifecycle-controller-manager-role",
+			"--type=merge",
+			"-p", `{"rules":[{"apiGroups":["*"],"resources":["*"],"verbs":["delete","get","list","patch","update","watch"]},{"apiGroups":[""],"resources":["events"],"verbs":["create","patch"]}]}`,
+		)
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to patch controller-manager RBAC")
+
+		By("enabling broad resource watches required by this suite")
 		cmd = exec.Command(
 			"kubectl", "patch", "deployment", controllerDeployment,
 			"-n", managerNamespace,
 			"--type=json",
-			"-p", `[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--watch-resource=*"}]`,
+			"-p", `[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--watch-resource=*"},{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--watch-resource=*.*"}]`,
 		)
 		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to patch controller-manager namespace watch")
+		Expect(err).NotTo(HaveOccurred(), "Failed to patch controller-manager resource watches")
 
 		cmd = exec.Command("kubectl", "rollout", "status", "deployment/"+controllerDeployment, "-n", managerNamespace, "--timeout=2m")
 		_, err = utils.Run(cmd)
@@ -636,18 +645,18 @@ spec:
 			By("verifying the deployment is NOT deleted or restarted")
 			Consistently(func(g Gomega) {
 				// Check it still exists
-					cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", testNamespace)
-					_, err := utils.Run(cmd)
-					g.Expect(err).NotTo(HaveOccurred())
-					// Check it was not restarted
-					dep := utils.GetDeployment(deploymentName, testNamespace, g)
+				cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", testNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				// Check it was not restarted
+				dep := utils.GetDeployment(deploymentName, testNamespace, g)
 				_, found := dep.Spec.Template.Annotations["lifecycle.cezary.dev/restartedAt"]
 				g.Expect(found).To(BeFalse())
 			}).WithTimeout(5 * time.Second).WithPolling(pollInterval).Should(Succeed())
 
 			By("verifying a warning event was posted")
 			Eventually(func(g Gomega) {
-					events := utils.GetEvents(g, testNamespace, deploymentName, "Deployment")
+				events := utils.GetEvents(g, testNamespace, deploymentName, "Deployment")
 				g.Expect(events).NotTo(BeEmpty())
 				foundEvent := false
 				for _, event := range events {
@@ -685,14 +694,14 @@ spec:
 
 			By("verifying the deployment is NOT deleted")
 			Consistently(func(g Gomega) {
-					cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", testNamespace)
-					_, err := utils.Run(cmd)
-					g.Expect(err).NotTo(HaveOccurred())
+				cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", testNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
 			}).WithTimeout(5 * time.Second).WithPolling(pollInterval).Should(Succeed())
 
 			By("verifying a dry-run event was posted")
 			Eventually(func(g Gomega) {
-					events := utils.GetEvents(g, testNamespace, deploymentName, "Deployment")
+				events := utils.GetEvents(g, testNamespace, deploymentName, "Deployment")
 				g.Expect(events).NotTo(BeEmpty(), "expected events for dry-run")
 				foundEvent := false
 				for _, event := range events {
@@ -770,23 +779,23 @@ spec:
 			_, _ = utils.Run(cmd)
 		})
 
-			BeforeEach(func() {
-				if testNamespace == managerNamespace {
-					return
-				}
-				By("creating CRD test namespace")
-				cmd := exec.Command("kubectl", "create", "ns", testNamespace)
-				_, err := utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred())
-			})
+		BeforeEach(func() {
+			if testNamespace == managerNamespace {
+				return
+			}
+			By("creating CRD test namespace")
+			cmd := exec.Command("kubectl", "create", "ns", testNamespace)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+		})
 
-			AfterEach(func() {
-				if testNamespace == managerNamespace {
-					return
-				}
-				By("deleting CRD test namespace")
-				cmd := exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found")
-				_, _ = utils.Run(cmd)
+		AfterEach(func() {
+			if testNamespace == managerNamespace {
+				return
+			}
+			By("deleting CRD test namespace")
+			cmd := exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found")
+			_, _ = utils.Run(cmd)
 		})
 
 		It("should delete a custom resource instance after the 'delete-after' duration", func() {
