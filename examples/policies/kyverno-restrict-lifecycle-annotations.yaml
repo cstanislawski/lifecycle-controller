@@ -1,0 +1,118 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-lifecycle-annotations
+  annotations:
+    policies.kyverno.io/title: Restrict lifecycle-controller annotations
+    policies.kyverno.io/category: Security
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Annotation
+    policies.kyverno.io/description: >-
+      Restricts top-level lifecycle.cezary.dev annotations to trusted users and
+      the lifecycle-controller ServiceAccount because the controller turns those
+      annotations into delete and restart actions.
+spec:
+  background: false
+  rules:
+    - name: block-lifecycle-annotations-on-create
+      match:
+        any:
+          - resources:
+              kinds:
+                - '*'
+              operations:
+                - CREATE
+      exclude:
+        any:
+          - clusterRoles:
+              - cluster-admin
+          - subjects:
+              - kind: Group
+                name: lifecycle-controller-annotation-admins
+              - kind: ServiceAccount
+                namespace: lifecycle-controller
+                name: lifecycle-controller
+              - kind: ServiceAccount
+                namespace: lifecycle-controller
+                name: lifecycle-controller-controller-manager
+      validate:
+        failureAction: Enforce
+        message: Only lifecycle annotation administrators may set lifecycle.cezary.dev annotations.
+        foreach:
+          - list: "items(request.object.metadata.annotations || `{}`, 'key', 'value')"
+            deny:
+              conditions:
+                all:
+                  - key: "{{ starts_with(element.key, 'lifecycle.cezary.dev/') }}"
+                    operator: Equals
+                    value: true
+    - name: block-lifecycle-annotation-changes-on-update
+      match:
+        any:
+          - resources:
+              kinds:
+                - '*'
+              operations:
+                - UPDATE
+      exclude:
+        any:
+          - clusterRoles:
+              - cluster-admin
+          - subjects:
+              - kind: Group
+                name: lifecycle-controller-annotation-admins
+              - kind: ServiceAccount
+                namespace: lifecycle-controller
+                name: lifecycle-controller
+              - kind: ServiceAccount
+                namespace: lifecycle-controller
+                name: lifecycle-controller-controller-manager
+      validate:
+        failureAction: Enforce
+        message: Only lifecycle annotation administrators may change lifecycle.cezary.dev annotations.
+        foreach:
+          - list: "items(request.object.metadata.annotations || `{}`, 'key', 'value')"
+            deny:
+              conditions:
+                all:
+                  - key: "{{ starts_with(element.key, 'lifecycle.cezary.dev/') }}"
+                    operator: Equals
+                    value: true
+                  - key: "{{ lookup(request.oldObject.metadata.annotations || `{}`, element.key) }}"
+                    operator: NotEquals
+                    value: "{{ element.value }}"
+    - name: block-lifecycle-annotation-removal-on-update
+      match:
+        any:
+          - resources:
+              kinds:
+                - '*'
+              operations:
+                - UPDATE
+      exclude:
+        any:
+          - clusterRoles:
+              - cluster-admin
+          - subjects:
+              - kind: Group
+                name: lifecycle-controller-annotation-admins
+              - kind: ServiceAccount
+                namespace: lifecycle-controller
+                name: lifecycle-controller
+              - kind: ServiceAccount
+                namespace: lifecycle-controller
+                name: lifecycle-controller-controller-manager
+      validate:
+        failureAction: Enforce
+        message: Only lifecycle annotation administrators may remove lifecycle.cezary.dev annotations.
+        foreach:
+          - list: "items(request.oldObject.metadata.annotations || `{}`, 'key', 'value')"
+            deny:
+              conditions:
+                all:
+                  - key: "{{ starts_with(element.key, 'lifecycle.cezary.dev/') }}"
+                    operator: Equals
+                    value: true
+                  - key: "{{ lookup(request.object.metadata.annotations || `{}`, element.key) }}"
+                    operator: NotEquals
+                    value: "{{ element.value }}"

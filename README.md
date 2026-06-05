@@ -133,6 +133,12 @@ By default, the controller discovers and watches **all** available resources (`*
 
 The controller supports glob-style patterns for filtering resources and namespaces via command-line flags (or Helm values).
 
+### Admission Policy Guardrails
+
+The controller turns top-level `lifecycle.cezary.dev/*` annotations into privileged actions such as deleting resources, deleting namespaces, and triggering rolling restarts. In shared clusters, pair controller scoping/RBAC with an admission policy that restricts who can create, change, or remove those annotations.
+
+Opt-in Kyverno and Gatekeeper examples are available in [`examples/policies`](examples/policies/). Edit the allowed users, groups, and controller ServiceAccount names before applying them.
+
 ### Configuration Flags
 
 - `--watch-resource` - (Repeatable) Glob pattern for resources to watch.

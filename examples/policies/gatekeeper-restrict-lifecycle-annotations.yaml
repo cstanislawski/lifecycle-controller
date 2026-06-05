@@ -1,0 +1,104 @@
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8slifecycleannotationguard
+  annotations:
+    metadata.gatekeeper.sh/title: Restrict lifecycle-controller annotations
+    metadata.gatekeeper.sh/version: 1.0.0
+    description: >-
+      Restricts top-level lifecycle.cezary.dev annotations to trusted users and
+      the lifecycle-controller ServiceAccount because the controller turns those
+      annotations into delete and restart actions.
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sLifecycleAnnotationGuard
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            allowedGroups:
+              type: array
+              items:
+                type: string
+            allowedUsernames:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8slifecycleannotationguard
+
+        default allowed_user = false
+
+        lifecycle_annotation(key) {
+          startswith(key, "lifecycle.cezary.dev/")
+        }
+
+        object_annotations(obj) = annotations {
+          metadata := object.get(obj, "metadata", {})
+          annotations := object.get(metadata, "annotations", {})
+        }
+
+        allowed_user {
+          username := input.review.userInfo.username
+          username == input.parameters.allowedUsernames[_]
+        }
+
+        allowed_user {
+          group := input.review.userInfo.groups[_]
+          group == input.parameters.allowedGroups[_]
+        }
+
+        violation[{"msg": msg, "details": {"annotation": key}}] {
+          input.review.operation == "CREATE"
+          not allowed_user
+          annotations := object_annotations(input.review.object)
+          annotations[key]
+          lifecycle_annotation(key)
+          msg := sprintf("only lifecycle annotation administrators may set %q", [key])
+        }
+
+        violation[{"msg": msg, "details": {"annotation": key}}] {
+          input.review.operation == "UPDATE"
+          not allowed_user
+          new_annotations := object_annotations(input.review.object)
+          old_annotations := object_annotations(input.review.oldObject)
+          new_value := new_annotations[key]
+          lifecycle_annotation(key)
+          old_value := object.get(old_annotations, key, "")
+          old_value != new_value
+          msg := sprintf("only lifecycle annotation administrators may change %q", [key])
+        }
+
+        violation[{"msg": msg, "details": {"annotation": key}}] {
+          input.review.operation == "UPDATE"
+          not allowed_user
+          new_annotations := object_annotations(input.review.object)
+          old_annotations := object_annotations(input.review.oldObject)
+          old_annotations[key]
+          lifecycle_annotation(key)
+          not new_annotations[key]
+          msg := sprintf("only lifecycle annotation administrators may remove %q", [key])
+        }
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sLifecycleAnnotationGuard
+metadata:
+  name: restrict-lifecycle-annotations
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups:
+          - '*'
+        kinds:
+          - '*'
+  parameters:
+    allowedGroups:
+      - lifecycle-controller-annotation-admins
+    allowedUsernames:
+      - system:serviceaccount:lifecycle-controller:lifecycle-controller
+      - system:serviceaccount:lifecycle-controller:lifecycle-controller-controller-manager
