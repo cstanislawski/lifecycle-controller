@@ -229,6 +229,7 @@ stringData:
 				"--set", fmt.Sprintf("image.repository=%s", repo),
 				"--set", fmt.Sprintf("image.tag=%s", tag),
 				"--set", "image.pullPolicy=Never",
+				"--set", "controllerManager.scope.watchResources[0]=configmaps",
 				"--set", fmt.Sprintf("controllerManager.scope.watchNamespaces[0]=%s", allowedNS),
 			)
 			_, err := utils.Run(cmd)

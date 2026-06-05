@@ -40,6 +40,20 @@ var _ = Describe("Lifecycle Controller E2E", Ordered, func() {
 		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+
+		By("enabling namespace watches required by this suite")
+		cmd = exec.Command(
+			"kubectl", "patch", "deployment", "controller-manager",
+			"-n", managerNamespace,
+			"--type=json",
+			"-p", `[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--watch-resource=namespaces"}]`,
+		)
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to patch controller-manager namespace watch")
+
+		cmd = exec.Command("kubectl", "rollout", "status", "deployment/controller-manager", "-n", managerNamespace, "--timeout=2m")
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed waiting for patched controller-manager rollout")
 	})
 
 	AfterAll(func() {
