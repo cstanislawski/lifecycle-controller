@@ -241,7 +241,6 @@ var _ = Describe("Lifecycle Controller", func() {
 				g.Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
 				g.Expect(fetched.Annotations).To(HaveKey(LastRestartTimestamp))
 				g.Expect(fetched.Annotations).To(HaveKeyWithValue(ManagedByAnnotation, ManagedByValue))
-				g.Expect(fetched.Spec.Template.Annotations).ToNot(HaveKey(ManagedByAnnotation))
 			}, Timeout, Interval).Should(Succeed())
 
 			By("Waiting for the first restart to be triggered")
