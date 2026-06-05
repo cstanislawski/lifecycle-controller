@@ -106,9 +106,12 @@ var _ = Describe("Lifecycle Controller E2E", Ordered, func() {
 	})
 
 	Context("Lifecycle Actions", func() {
-		const testNamespace = "lifecycle-e2e-tests"
+		testNamespace := managerNamespace
 
 		BeforeEach(func() {
+			if testNamespace == managerNamespace {
+				return
+			}
 			By("creating test namespace")
 			cmd := exec.Command("kubectl", "create", "ns", testNamespace)
 			_, err := utils.Run(cmd)
@@ -116,6 +119,9 @@ var _ = Describe("Lifecycle Controller E2E", Ordered, func() {
 		})
 
 		AfterEach(func() {
+			if testNamespace == managerNamespace {
+				return
+			}
 			By("deleting test namespace")
 			cmd := exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found")
 			_, _ = utils.Run(cmd)
@@ -615,7 +621,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: %s
-  namespace: default
+  namespace: %s
   annotations:
     lifecycle.cezary.dev/delete-after: "1s"
     lifecycle.cezary.dev/restart-after: "1s"
@@ -625,24 +631,24 @@ spec:
   template:
     metadata: { labels: { app: test-conflict }}
     spec: { containers: [ { name: nginx, image: nginx:latest } ] }
-`, deploymentName)
+`, deploymentName, testNamespace)
 			utils.ApplyYAML(deploymentYAML)
 
 			By("verifying the deployment is NOT deleted or restarted")
 			Consistently(func(g Gomega) {
 				// Check it still exists
-				cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", "default")
-				_, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				// Check it was not restarted
-				dep := utils.GetDeployment(deploymentName, "default", g)
+					cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", testNamespace)
+					_, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					// Check it was not restarted
+					dep := utils.GetDeployment(deploymentName, testNamespace, g)
 				_, found := dep.Spec.Template.Annotations["lifecycle.cezary.dev/restartedAt"]
 				g.Expect(found).To(BeFalse())
 			}).WithTimeout(5 * time.Second).WithPolling(pollInterval).Should(Succeed())
 
 			By("verifying a warning event was posted")
 			Eventually(func(g Gomega) {
-				events := utils.GetEvents(g, "default", deploymentName, "Deployment")
+					events := utils.GetEvents(g, testNamespace, deploymentName, "Deployment")
 				g.Expect(events).NotTo(BeEmpty())
 				foundEvent := false
 				for _, event := range events {
@@ -654,7 +660,7 @@ spec:
 				g.Expect(foundEvent).To(BeTrue(), "expected to find a ConflictingAnnotations warning event")
 			}).WithTimeout(30 * time.Second).WithPolling(pollInterval).Should(Succeed())
 
-			cmd := exec.Command("kubectl", "delete", "deployment", deploymentName, "-n", "default")
+			cmd := exec.Command("kubectl", "delete", "deployment", deploymentName, "-n", testNamespace)
 			_, _ = utils.Run(cmd)
 		})
 
@@ -665,7 +671,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: %s
-  namespace: default
+  namespace: %s
   annotations:
     lifecycle.cezary.dev/delete-after: "2s"
     lifecycle.cezary.dev/dry-run: "true"
@@ -675,19 +681,19 @@ spec:
   template:
     metadata: { labels: { app: test-dry-run }}
     spec: { containers: [ { name: nginx, image: nginx:latest } ] }
-`, deploymentName)
+`, deploymentName, testNamespace)
 			utils.ApplyYAML(deploymentYAML)
 
 			By("verifying the deployment is NOT deleted")
 			Consistently(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", "default")
-				_, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
+					cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", testNamespace)
+					_, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
 			}).WithTimeout(5 * time.Second).WithPolling(pollInterval).Should(Succeed())
 
 			By("verifying a dry-run event was posted")
 			Eventually(func(g Gomega) {
-				events := utils.GetEvents(g, "default", deploymentName, "Deployment")
+					events := utils.GetEvents(g, testNamespace, deploymentName, "Deployment")
 				g.Expect(events).NotTo(BeEmpty(), "expected events for dry-run")
 				foundEvent := false
 				for _, event := range events {
@@ -765,17 +771,23 @@ spec:
 			_, _ = utils.Run(cmd)
 		})
 
-		BeforeEach(func() {
-			By("creating CRD test namespace")
-			cmd := exec.Command("kubectl", "create", "ns", testNamespace)
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
-		})
+			BeforeEach(func() {
+				if testNamespace == managerNamespace {
+					return
+				}
+				By("creating CRD test namespace")
+				cmd := exec.Command("kubectl", "create", "ns", testNamespace)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+			})
 
-		AfterEach(func() {
-			By("deleting CRD test namespace")
-			cmd := exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found")
-			_, _ = utils.Run(cmd)
+			AfterEach(func() {
+				if testNamespace == managerNamespace {
+					return
+				}
+				By("deleting CRD test namespace")
+				cmd := exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found")
+				_, _ = utils.Run(cmd)
 		})
 
 		It("should delete a custom resource instance after the 'delete-after' duration", func() {
