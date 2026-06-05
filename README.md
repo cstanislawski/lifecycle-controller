@@ -76,6 +76,7 @@ The controller's behavior is configured entirely through annotations.
     - This can be applied directly to a `Namespace` to trigger its deletion. Kubernetes will handle the subsequent removal of all resources within that namespace.
   - `lifecycle.cezary.dev/delete-after`: Relative TTL (e.g., `5m`, `1h`, `3d`). The controller processes this annotation by calculating an absolute deletion time based on the time it first notices the annotation. It then adds a `lifecycle.cezary.dev/delete-at` annotation to the resource with this calculated time. To prevent re-calculation and make the state explicit, the original `lifecycle.cezary.dev/delete-after` annotation is then removed. **Supports `s`, `m`, `h`, and `d` (days).**
   - `lifecycle.cezary.dev/dry-run: "true"`: Per-resource dry-run annotation. The controller logs actions it would take without executing them.
+  - `lifecycle.cezary.dev/managed-by: "lifecycle-controller"`: Added by the controller when it mutates a resource, such as converting `*-after` annotations to `*-at` annotations, maintaining restart schedule state, or triggering a restart.
 
 - **Only for pod-spawning resources (Deployments, StatefulSets, DaemonSets, etc.):**
   - `lifecycle.cezary.dev/restart-at`: Performs a one-time rolling restart at a specific date and time.
@@ -88,6 +89,7 @@ The controller's behavior is configured entirely through annotations.
 
 - **Restart Mechanism**
   - **Triggering a Restart** - To initiate a rolling restart, the controller injects a `lifecycle.cezary.dev/restartedAt: "<timestamp>"` annotation into the resource's`spec.template.metadata.annotations`. This is the standard mechanism that causes Kubernetes to detect a change in the pod template and trigger a rollout.
+    - The same pod template mutation also adds `lifecycle.cezary.dev/managed-by: "lifecycle-controller"` to `spec.template.metadata.annotations`.
   - **State Tracking for Recurring Restarts** - For `restart-every` and `restart-cron` schedules, the controller maintains its state using a top-level `lifecycle.cezary.dev/last-restart-timestamp: "<timestamp>"` annotation on the resource. This timestamp serves as the anchor for calculating the next restart, ensuring the schedule remains stable over time.
     - **Initialization** - If the `last-restart-timestamp` annotation is missing on a resource with a recurring restart schedule, the controller adds it and sets its value to the current time. This bootstraps the schedule.
     - **Reconciliation Logic** - On each check, the controller performs the following steps:

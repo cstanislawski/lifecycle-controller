@@ -52,6 +52,7 @@ var _ = Describe("Lifecycle Controller", func() {
 				ann := fetched.GetAnnotations()
 				g.Expect(ann).To(HaveKey(DeleteAtAnnotation))
 				g.Expect(ann).ToNot(HaveKey(DeleteAfterAnnotation))
+				g.Expect(ann).To(HaveKeyWithValue(ManagedByAnnotation, ManagedByValue))
 
 				// Check if the timestamp is roughly correct
 				deleteAtTime, err := time.Parse(time.RFC3339, ann[DeleteAtAnnotation])
@@ -160,6 +161,8 @@ var _ = Describe("Lifecycle Controller", func() {
 				ann := fetched.GetAnnotations()
 				g.Expect(ann).To(HaveKey(RestartAtAnnotation))
 				g.Expect(ann).ToNot(HaveKey(RestartAfterAnnotation))
+				g.Expect(ann).To(HaveKeyWithValue(ManagedByAnnotation, ManagedByValue))
+				g.Expect(fetched.Spec.Template.Annotations).ToNot(HaveKey(ManagedByAnnotation))
 
 				restartAtTime, err := time.Parse(time.RFC3339, ann[RestartAtAnnotation])
 				g.Expect(err).NotTo(HaveOccurred())
@@ -201,10 +204,12 @@ var _ = Describe("Lifecycle Controller", func() {
 
 				// Check that the main annotation is gone
 				g.Expect(fetched.Annotations).ToNot(HaveKey(RestartAtAnnotation))
+				g.Expect(fetched.Annotations).To(HaveKeyWithValue(ManagedByAnnotation, ManagedByValue))
 
 				// Check that the template annotation was added to trigger the restart
 				templateAnnotations := fetched.Spec.Template.Annotations
 				g.Expect(templateAnnotations).To(HaveKey(RestartedAtTemplate))
+				g.Expect(templateAnnotations).To(HaveKeyWithValue(ManagedByAnnotation, ManagedByValue))
 			}, Timeout, Interval).Should(Succeed())
 
 			// Cleanup
@@ -235,6 +240,8 @@ var _ = Describe("Lifecycle Controller", func() {
 				fetched := &appsv1.Deployment{}
 				g.Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
 				g.Expect(fetched.Annotations).To(HaveKey(LastRestartTimestamp))
+				g.Expect(fetched.Annotations).To(HaveKeyWithValue(ManagedByAnnotation, ManagedByValue))
+				g.Expect(fetched.Spec.Template.Annotations).ToNot(HaveKey(ManagedByAnnotation))
 			}, Timeout, Interval).Should(Succeed())
 
 			By("Waiting for the first restart to be triggered")
@@ -243,6 +250,7 @@ var _ = Describe("Lifecycle Controller", func() {
 				fetched := &appsv1.Deployment{}
 				g.Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
 				g.Expect(fetched.Spec.Template.Annotations).To(HaveKey(RestartedAtTemplate))
+				g.Expect(fetched.Spec.Template.Annotations).To(HaveKeyWithValue(ManagedByAnnotation, ManagedByValue))
 				firstRestartTime = fetched.Spec.Template.Annotations[RestartedAtTemplate]
 			}, Timeout, Interval).Should(Succeed())
 
