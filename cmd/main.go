@@ -109,11 +109,11 @@ func main() {
 	flag.Var(&watchNamespaces, "watch-namespace", "Glob pattern for namespaces to watch "+
 		"(e.g. 'default', 'dev-*'). Can be repeated.")
 	flag.Var(&ignoreNamespaces, "ignore-namespace", "Glob pattern for namespaces to ignore. Can be repeated.")
-		flag.BoolVar(&globalDryRun, "dry-run", false,
-			"Enable dry-run mode for all resources. When set, actions are logged but not executed.")
-		flag.StringVar(&maxDeleteTTLFlag, "max-delete-ttl", "",
-			"Maximum allowed delete TTL for delete-after and future delete-at annotations. "+
-				"Supports s, m, h, and d. Unset or 0 disables the guardrail.")
+	flag.BoolVar(&globalDryRun, "dry-run", false,
+		"Enable dry-run mode for all resources. When set, actions are logged but not executed.")
+	flag.StringVar(&maxDeleteTTLFlag, "max-delete-ttl", "",
+		"Maximum allowed delete TTL for delete-after and future delete-at annotations. "+
+			"Supports s, m, h, and d. Unset or 0 disables the guardrail.")
 
 	opts := zap.Options{}
 
