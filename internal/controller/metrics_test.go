@@ -17,7 +17,7 @@ import (
 func TestLifecycleMetricsRecordActionAndMisconfiguration(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := newLifecycleMetrics(registry)
-	obj := metricTestObject("Deployment", "default", "metrics-action")
+	obj := metricTestObject("default", "metrics-action")
 
 	metrics.recordAction(obj, metricActionDelete, metricResultSuccess)
 	metrics.recordAction(obj, metricActionRestart, metricResultDryRun)
@@ -37,8 +37,8 @@ func TestLifecycleMetricsRecordActionAndMisconfiguration(t *testing.T) {
 func TestLifecycleMetricsNextActionTimestampAggregatesEarliest(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := newLifecycleMetrics(registry)
-	first := metricTestObject("Deployment", "default", "first-schedule")
-	second := metricTestObject("Deployment", "default", "second-schedule")
+	first := metricTestObject("default", "first-schedule")
+	second := metricTestObject("default", "second-schedule")
 	firstTime := time.Unix(1_700_000_000, 0).UTC()
 	secondTime := firstTime.Add(time.Hour)
 
@@ -59,7 +59,7 @@ func TestLifecycleMetricsNextActionTimestampAggregatesEarliest(t *testing.T) {
 func TestLifecycleMetricsNextActionTimestampDeletesEmptySeries(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := newLifecycleMetrics(registry)
-	obj := metricTestObject("Deployment", "default", "clear-schedule")
+	obj := metricTestObject("default", "clear-schedule")
 
 	metrics.observeNextAction(obj, metricActionRestart, time.Unix(1_700_000_000, 0).UTC())
 	metrics.clearNextAction(obj)
@@ -73,7 +73,7 @@ func TestReconcileLogicRecordsNextDeleteMetric(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := newLifecycleMetrics(registry)
 	reconciler := &LifecycleReconciler{Metrics: metrics}
-	obj := metricTestObject("Deployment", "default", "scheduled-delete")
+	obj := metricTestObject("default", "scheduled-delete")
 	deleteAt := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
 	obj.SetAnnotations(map[string]string{
 		DeleteAtAnnotation: deleteAt.Format(time.RFC3339),
@@ -91,9 +91,9 @@ func TestReconcileLogicRecordsNextDeleteMetric(t *testing.T) {
 	}
 }
 
-func metricTestObject(kind, namespace, name string) *unstructured.Unstructured {
+func metricTestObject(namespace, name string) *unstructured.Unstructured {
 	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: kind})
+	obj.SetGroupVersionKind(schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"})
 	obj.SetNamespace(namespace)
 	obj.SetName(name)
 	obj.SetUID(types.UID(namespace + "-" + name))
