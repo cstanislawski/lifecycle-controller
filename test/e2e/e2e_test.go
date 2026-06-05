@@ -61,7 +61,7 @@ var _ = Describe("Lifecycle Controller E2E", Ordered, func() {
 			"kubectl", "patch", "deployment", controllerDeployment,
 			"-n", managerNamespace,
 			"--type=json",
-			"-p", `[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--watch-resource=namespaces"}]`,
+			"-p", `[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--watch-resource=*"}]`,
 		)
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to patch controller-manager namespace watch")
