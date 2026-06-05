@@ -196,3 +196,13 @@ controllerManager:
       - "default"
       - "dev-*"
 ```
+
+### Metrics
+
+The controller exposes Prometheus metrics through the controller-runtime `/metrics` endpoint. Helm enables the endpoint and metrics Service by default; set `metrics.serviceMonitor.enabled: true` when using Prometheus Operator.
+
+In addition to standard controller-runtime and workqueue metrics, the controller publishes:
+
+- `lifecycle_actions_total{action,kind,namespace,result}` - delete/restart actions, with `result` values `success`, `dry_run`, or `error`.
+- `lifecycle_next_action_timestamp{action,kind,namespace}` - Unix timestamp for the next known lifecycle action, aggregated to the earliest action per label set.
+- `lifecycle_misconfigurations_total{kind,namespace,reason}` - invalid or conflicting lifecycle annotations observed by the controller.

@@ -72,7 +72,8 @@ controllerManager:
     ignoreNamespaces: []
 
 metrics:
-  # Enable the metrics endpoint
+  # Enable the /metrics endpoint. It includes controller-runtime metrics plus:
+  # lifecycle_actions_total, lifecycle_next_action_timestamp, and lifecycle_misconfigurations_total.
   enabled: true
   bindAddress: ":8443"
   secure: true # Corresponds to --metrics-secure flag

@@ -11,3 +11,16 @@ To delete a Deployment named 'my-app' in the 'default' namespace after 10 minute
 kubectl annotate deployment my-app -n default lifecycle.cezary.dev/delete-after="10m"
 
 The controller will see this annotation, convert it to a fixed 'delete-at' timestamp, and remove the resource when the time comes.
+
+{{- if .Values.metrics.enabled }}
+
+Metrics are exposed on the controller /metrics endpoint.
+Key lifecycle metrics:
+- lifecycle_actions_total
+- lifecycle_next_action_timestamp
+- lifecycle_misconfigurations_total
+{{- if .Values.metrics.serviceMonitor.enabled }}
+
+A ServiceMonitor was created for Prometheus Operator scraping.
+{{- end }}
+{{- end }}
