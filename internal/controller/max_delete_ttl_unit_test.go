@@ -98,8 +98,8 @@ func TestHandleDeletionConvertsDeleteAfterAtMaxTTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handle deletion: %v", err)
 	}
-	if !result.Requeue {
-		t.Fatalf("expected requeue after conversion, got %#v", result)
+	if result == (ctrl.Result{}) || result.RequeueAfter != 0 {
+		t.Fatalf("expected immediate requeue after conversion, got %#v", result)
 	}
 
 	fetched := fetchUnitDeployment(t, reconciler.Client, client.ObjectKeyFromObject(obj))
@@ -153,7 +153,7 @@ func TestHandleDeletionDeletesPastDeleteAtWithMaxTTL(t *testing.T) {
 	fetched := &unstructured.Unstructured{}
 	fetched.SetAPIVersion("apps/v1")
 	fetched.SetKind("Deployment")
-	err = reconciler.Client.Get(context.Background(), client.ObjectKeyFromObject(obj), fetched)
+	err = reconciler.Get(context.Background(), client.ObjectKeyFromObject(obj), fetched)
 	if !apierrors.IsNotFound(err) {
 		t.Fatalf("expected deployment to be deleted, got err=%v", err)
 	}
