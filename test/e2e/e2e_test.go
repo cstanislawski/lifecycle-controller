@@ -41,9 +41,24 @@ var _ = Describe("Lifecycle Controller E2E", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 
+		By("waiting for the controller-manager deployment to exist")
+		var controllerDeployment string
+		Eventually(func(g Gomega) {
+			cmd = exec.Command(
+				"kubectl", "get", "deployment",
+				"-n", managerNamespace,
+				"-l", "app.kubernetes.io/component=controller-manager",
+				"-o", "jsonpath={.items[0].metadata.name}",
+			)
+			output, getErr := utils.Run(cmd)
+			g.Expect(getErr).NotTo(HaveOccurred())
+			controllerDeployment = strings.TrimSpace(output)
+			g.Expect(controllerDeployment).NotTo(BeEmpty())
+		}).WithTimeout(2 * time.Minute).WithPolling(pollInterval).Should(Succeed())
+
 		By("enabling namespace watches required by this suite")
 		cmd = exec.Command(
-			"kubectl", "patch", "deployment", "controller-manager",
+			"kubectl", "patch", "deployment", controllerDeployment,
 			"-n", managerNamespace,
 			"--type=json",
 			"-p", `[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--watch-resource=namespaces"}]`,
@@ -51,7 +66,7 @@ var _ = Describe("Lifecycle Controller E2E", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to patch controller-manager namespace watch")
 
-		cmd = exec.Command("kubectl", "rollout", "status", "deployment/controller-manager", "-n", managerNamespace, "--timeout=2m")
+		cmd = exec.Command("kubectl", "rollout", "status", "deployment/"+controllerDeployment, "-n", managerNamespace, "--timeout=2m")
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed waiting for patched controller-manager rollout")
 	})
