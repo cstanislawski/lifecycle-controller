@@ -1,0 +1,19 @@
+suite: Controller manager args
+templates:
+  - templates/deployment.yaml
+
+tests:
+  - it: renders max delete TTL when configured
+    set:
+      controllerManager:
+        maxDeleteTTL: 30d
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --max-delete-ttl=30d
+
+  - it: omits max delete TTL when unset
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --max-delete-ttl=30d

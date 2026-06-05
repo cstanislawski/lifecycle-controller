@@ -53,6 +53,9 @@ spec:
             - --enable-http2
             {{- end }}
             - --dry-run={{ .Values.controllerManager.dryRun }}
+            {{- if .Values.controllerManager.maxDeleteTTL }}
+            - --max-delete-ttl={{ .Values.controllerManager.maxDeleteTTL }}
+            {{- end }}
             - --zap-log-level={{ .Values.controllerManager.logLevel }}
             {{- range .Values.controllerManager.scope.watchResources }}
             - --watch-resource={{ . }}

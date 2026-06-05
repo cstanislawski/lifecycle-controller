@@ -74,7 +74,9 @@ The controller's behavior is configured entirely through annotations.
   - `lifecycle.cezary.dev/delete-at`: Absolute TTL. The controller deletes the resource at or after this specific date and time (e.g., `2024-12-31T23:59:59Z`).
     - The value must be an RFC3339 timestamp with explicit timezone offset (`Z` or `±hh:mm`).
     - This can be applied directly to a `Namespace` to trigger its deletion. Kubernetes will handle the subsequent removal of all resources within that namespace.
+    - If the optional maximum delete TTL is configured, future `delete-at` timestamps are ignored when they are farther away than the configured maximum from the controller's reconciliation time.
   - `lifecycle.cezary.dev/delete-after`: Relative TTL (e.g., `5m`, `1h`, `3d`). The controller processes this annotation by calculating an absolute deletion time based on the time it first notices the annotation. It then adds a `lifecycle.cezary.dev/delete-at` annotation to the resource with this calculated time. To prevent re-calculation and make the state explicit, the original `lifecycle.cezary.dev/delete-after` annotation is then removed. **Supports `s`, `m`, `h`, and `d` (days).**
+    - If the optional maximum delete TTL is configured, `delete-after` values longer than that maximum are ignored and no `delete-at` annotation is written.
   - `lifecycle.cezary.dev/dry-run: "true"`: Per-resource dry-run annotation. The controller logs actions it would take without executing them.
   - `lifecycle.cezary.dev/managed-by: "lifecycle-controller"`: Added by the controller when it mutates a resource, such as converting `*-after` annotations to `*-at` annotations, maintaining restart schedule state, or triggering a restart.
 
@@ -102,6 +104,14 @@ The controller's behavior is configured entirely through annotations.
 
 **Dry-run**
 Dry-run logs the actions the controller would take without executing them. It can be enabled globally (`--dry-run=true|false` or Helm `controllerManager.dryRun: true`) or per-resource via `lifecycle.cezary.dev/dry-run: "true"`. Dry-run is enabled for a given resource if either is set.
+
+**Maximum delete TTL**
+The maximum delete TTL guardrail is disabled by default. Set `--max-delete-ttl=30d` or Helm `controllerManager.maxDeleteTTL: "30d"` to reject delete schedules beyond that horizon. The value supports `s`, `m`, `h`, and `d` units.
+
+When configured:
+- `delete-after` is checked directly against the configured maximum.
+- Future `delete-at` is checked as a schedule horizon from reconciliation time. Past `delete-at` values are still eligible for deletion.
+- Rejected annotations are left unchanged, no delete action is taken, and the controller records a warning Event with reason `DeleteTTLExceeded`.
 
 - **Precedence:**
   - **Conflicting action types** - If a resource mixes annotations from different action families (any combination of `restart-*` and `delete-*`), the controller treats it as a misconfiguration. It will post a warning `Event` on the resource and take no action.
@@ -209,6 +219,7 @@ To configure scoping via Helm (which also tightens RBAC):
 
 ```yaml
 controllerManager:
+  maxDeleteTTL: "30d"
   scope:
     watchResources:
       - "deployments.apps"

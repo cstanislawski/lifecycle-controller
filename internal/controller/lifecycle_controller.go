@@ -44,24 +44,6 @@ const (
 	ReferencePointCreationTimestamp = "creationTimestamp"
 )
 
-type MaxTTLExceededAction string
-
-const (
-	MaxTTLExceededReject MaxTTLExceededAction = "reject"
-	MaxTTLExceededWarn   MaxTTLExceededAction = "warn"
-	MaxTTLExceededIgnore MaxTTLExceededAction = "ignore"
-	MaxTTLExceededClamp  MaxTTLExceededAction = "clamp"
-)
-
-func IsValidMaxTTLExceededAction(action string) bool {
-	switch MaxTTLExceededAction(action) {
-	case MaxTTLExceededReject, MaxTTLExceededWarn, MaxTTLExceededIgnore, MaxTTLExceededClamp:
-		return true
-	default:
-		return false
-	}
-}
-
 // ResourceScope holds the GVK and scope information for a discovered resource.
 type ResourceScope struct {
 	GVK          schema.GroupVersionKind
@@ -76,8 +58,7 @@ type LifecycleReconciler struct {
 	KnownResources []ResourceScope
 	Config         ScopeConfig
 	GlobalDryRun   bool
-	MaxTTL         time.Duration
-	MaxTTLExceeded MaxTTLExceededAction
+	MaxDeleteTTL   time.Duration
 }
 
 // +kubebuilder:rbac:groups=*,resources=*,verbs=get;list;watch;delete;update;patch
@@ -119,6 +100,30 @@ func ParseExtendedDuration(durationStr string) (time.Duration, error) {
 	}
 
 	return time.ParseDuration(processedStr)
+}
+
+func (r *LifecycleReconciler) exceedsMaxDeleteTTL(ttl time.Duration) bool {
+	return r.MaxDeleteTTL > 0 && ttl > r.MaxDeleteTTL
+}
+
+func (r *LifecycleReconciler) recordMaxDeleteTTLExceeded(obj client.Object, annotation, value string, ttl time.Duration, logger logr.Logger) {
+	logger.Info(
+		"Ignoring delete annotation because it exceeds the configured maximum TTL",
+		"annotation", annotation,
+		"value", value,
+		"ttl", ttl.String(),
+		"maxDeleteTTL", r.MaxDeleteTTL.String(),
+	)
+	r.Recorder.Eventf(
+		obj,
+		"Warning",
+		"DeleteTTLExceeded",
+		"Ignoring %s=%q because TTL %s exceeds maximum %s.",
+		annotation,
+		value,
+		ttl,
+		r.MaxDeleteTTL,
+	)
 }
 
 // getReferenceTime determines the starting point for a relative timer based on annotations.
@@ -255,8 +260,8 @@ func (r *LifecycleReconciler) handleDeletion(ctx context.Context, obj *unstructu
 			r.Recorder.Eventf(obj, "Warning", "InvalidAnnotation", "Invalid format for delete-after annotation: %v", err)
 			return ctrl.Result{}, nil
 		}
-		duration, ok := r.applyMaxTTLPolicy(obj, DeleteAfterAnnotation, deleteAfterStr, duration, logger)
-		if !ok {
+		if r.exceedsMaxDeleteTTL(duration) {
+			r.recordMaxDeleteTTLExceeded(obj, DeleteAfterAnnotation, deleteAfterStr, duration, logger)
 			return ctrl.Result{}, nil
 		}
 		referenceTime := r.getReferenceTime(obj, logger)
@@ -287,7 +292,13 @@ func (r *LifecycleReconciler) handleDeletion(ctx context.Context, obj *unstructu
 			return ctrl.Result{}, nil
 		}
 
-		if time.Now().After(deleteAtTime) {
+		now := time.Now().UTC()
+		if deleteAtTTL := deleteAtTime.Sub(now); r.exceedsMaxDeleteTTL(deleteAtTTL) {
+			r.recordMaxDeleteTTLExceeded(obj, DeleteAtAnnotation, deleteAtStr, deleteAtTTL, logger)
+			return ctrl.Result{}, nil
+		}
+
+		if now.After(deleteAtTime) {
 			logger.Info("Deleting resource based on delete-at annotation", "targetTime", deleteAtTime.String())
 			if !isDryRun {
 				if err := r.Delete(ctx, obj); err != nil {
@@ -311,41 +322,6 @@ func (r *LifecycleReconciler) handleDeletion(ctx context.Context, obj *unstructu
 	}
 
 	return ctrl.Result{}, nil
-}
-
-func (r *LifecycleReconciler) applyMaxTTLPolicy(obj client.Object, annotation, value string, duration time.Duration, logger logr.Logger) (time.Duration, bool) {
-	if r.MaxTTL <= 0 || duration <= r.MaxTTL {
-		return duration, true
-	}
-
-	action := r.MaxTTLExceeded
-	if action == "" {
-		action = MaxTTLExceededReject
-	}
-
-	message := fmt.Sprintf("%s duration %s exceeds configured max TTL %s", annotation, value, r.MaxTTL)
-	switch action {
-	case MaxTTLExceededWarn:
-		logger.Info("Max TTL exceeded; accepting annotation", "annotation", annotation, "value", value, "duration", duration, "maxTTL", r.MaxTTL)
-		r.Recorder.Event(obj, "Warning", "MaxTTLExceeded", message)
-		return duration, true
-	case MaxTTLExceededIgnore:
-		logger.Info("Max TTL exceeded; ignoring annotation", "annotation", annotation, "value", value, "duration", duration, "maxTTL", r.MaxTTL)
-		r.Recorder.Event(obj, "Warning", "MaxTTLExceeded", message+"; ignoring annotation")
-		return 0, false
-	case MaxTTLExceededClamp:
-		logger.Info("Max TTL exceeded; clamping duration", "annotation", annotation, "value", value, "duration", duration, "maxTTL", r.MaxTTL)
-		r.Recorder.Event(obj, "Warning", "MaxTTLExceeded", message+"; clamping to max TTL")
-		return r.MaxTTL, true
-	case MaxTTLExceededReject:
-		logger.Info("Max TTL exceeded; rejecting annotation", "annotation", annotation, "value", value, "duration", duration, "maxTTL", r.MaxTTL)
-		r.Recorder.Event(obj, "Warning", "MaxTTLExceeded", message+"; rejecting annotation")
-		return 0, false
-	default:
-		logger.Info("Invalid max TTL exceeded action; rejecting annotation", "action", action)
-		r.Recorder.Eventf(obj, "Warning", "InvalidConfiguration", "Invalid max TTL exceeded action %q; rejecting %s", action, annotation)
-		return 0, false
-	}
 }
 
 // handleRestart implements the full restart logic with precedence.

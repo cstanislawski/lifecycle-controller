@@ -2,8 +2,8 @@ package main
 
 import (
 	"crypto/tls"
-	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -51,6 +51,23 @@ func (i *arrayFlags) Set(value string) error {
 	return nil
 }
 
+func parseMaxDeleteTTLFlag(value string) (time.Duration, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "0" {
+		return 0, nil
+	}
+
+	ttl, err := controller.ParseExtendedDuration(value)
+	if err != nil {
+		return 0, err
+	}
+	if ttl < 0 {
+		return 0, fmt.Errorf("max-delete-ttl must not be negative")
+	}
+
+	return ttl, nil
+}
+
 // nolint:gocyclo
 func main() {
 	var metricsAddr string
@@ -65,8 +82,7 @@ func main() {
 	var watchResources, ignoreResources arrayFlags
 	var watchNamespaces, ignoreNamespaces arrayFlags
 	var globalDryRun bool
-	var maxTTLStr string
-	var maxTTLExceeded string
+	var maxDeleteTTLFlag string
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -95,10 +111,8 @@ func main() {
 	flag.Var(&ignoreNamespaces, "ignore-namespace", "Glob pattern for namespaces to ignore. Can be repeated.")
 	flag.BoolVar(&globalDryRun, "dry-run", false,
 		"Enable dry-run mode for all resources. When set, actions are logged but not executed.")
-	flag.StringVar(&maxTTLStr, "max-ttl", "",
-		"Maximum allowed delete-after TTL. Empty disables the limit. Supports s, m, h, and d (days).")
-	flag.StringVar(&maxTTLExceeded, "max-ttl-exceeded", string(controller.MaxTTLExceededReject),
-		"Action when delete-after exceeds --max-ttl. Valid values: reject, warn, ignore, clamp.")
+	flag.StringVar(&maxDeleteTTLFlag, "max-delete-ttl", "",
+		"Maximum allowed delete TTL for delete-after and future delete-at annotations. Supports s, m, h, and d. Unset or 0 disables the guardrail.")
 
 	opts := zap.Options{}
 
@@ -107,21 +121,9 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	var maxTTL time.Duration
-	if maxTTLStr != "" {
-		parsedMaxTTL, err := controller.ParseExtendedDuration(maxTTLStr)
-		if err != nil {
-			setupLog.Error(err, "invalid max-ttl value", "value", maxTTLStr)
-			os.Exit(1)
-		}
-		if parsedMaxTTL <= 0 {
-			setupLog.Error(errors.New("invalid max-ttl"), "max-ttl must be greater than zero", "value", maxTTLStr)
-			os.Exit(1)
-		}
-		maxTTL = parsedMaxTTL
-	}
-	if !controller.IsValidMaxTTLExceededAction(maxTTLExceeded) {
-		setupLog.Error(errors.New("invalid max-ttl-exceeded"), "invalid max-ttl-exceeded value", "value", maxTTLExceeded, "validValues", "reject,warn,ignore,clamp")
+	maxDeleteTTL, err := parseMaxDeleteTTLFlag(maxDeleteTTLFlag)
+	if err != nil {
+		setupLog.Error(err, "invalid max-delete-ttl", "value", maxDeleteTTLFlag)
 		os.Exit(1)
 	}
 
@@ -230,19 +232,15 @@ func main() {
 		"ignoreNamespaces", ignoreNamespaces,
 	)
 	setupLog.Info("Global dry-run mode", "enabled", globalDryRun)
-	setupLog.Info("Max TTL configuration",
-		"maxTTL", maxTTLStr,
-		"maxTTLExceeded", maxTTLExceeded,
-	)
+	setupLog.Info("Maximum delete TTL", "value", maxDeleteTTL)
 
 	if err := (&controller.LifecycleReconciler{
-		Client:         mgr.GetClient(),
-		Scheme:         mgr.GetScheme(),
-		Config:         scopeConfig,
-		GlobalDryRun:   globalDryRun,
-		MaxTTL:         maxTTL,
-		MaxTTLExceeded: controller.MaxTTLExceededAction(maxTTLExceeded),
-		Recorder:       mgr.GetEventRecorderFor("lifecycle-controller"),
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		Config:       scopeConfig,
+		GlobalDryRun: globalDryRun,
+		MaxDeleteTTL: maxDeleteTTL,
+		Recorder:     mgr.GetEventRecorderFor("lifecycle-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Lifecycle")
 		os.Exit(1)

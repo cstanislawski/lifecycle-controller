@@ -56,6 +56,10 @@ controllerManager:
   # Enable global dry-run mode (logs actions without executing them)
   dryRun: false
 
+  # Maximum allowed delete TTL for delete-after and future delete-at annotations.
+  # Supports s, m, h, and d (days). Empty or "0" disables the guardrail.
+  maxDeleteTTL: ""
+
   # Log level for the controller (debug, info, error)
   logLevel: info
 
