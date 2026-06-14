@@ -250,7 +250,7 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/delete-after: "4s"
+    lifecycle.cezary.dev/delete-after: "8s"
 spec:
   replicas: 1
   selector:
