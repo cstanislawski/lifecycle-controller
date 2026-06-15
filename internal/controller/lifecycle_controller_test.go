@@ -235,29 +235,35 @@ var _ = Describe("Lifecycle Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
 
-			By("Waiting for the controller to initialize the last-restart-timestamp")
+			By("Waiting for the controller to record recurring restart state")
+			var previousLastRestart string
 			Eventually(func(g Gomega) {
 				fetched := &appsv1.Deployment{}
 				g.Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
 				g.Expect(fetched.Annotations).To(HaveKey(LastRestartTimestamp))
 				g.Expect(fetched.Annotations).To(HaveKeyWithValue(ManagedByAnnotation, ManagedByValue))
-				g.Expect(fetched.Spec.Template.Annotations).ToNot(HaveKey(ManagedByAnnotation))
+				previousLastRestart = fetched.Annotations[LastRestartTimestamp]
 			}, Timeout, Interval).Should(Succeed())
 
-			By("Waiting for the first restart to be triggered")
+			By("Waiting for the next recurring restart to be triggered")
 			var firstRestartTime string
 			Eventually(func(g Gomega) {
 				fetched := &appsv1.Deployment{}
 				g.Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
+				g.Expect(fetched.Annotations).To(HaveKey(LastRestartTimestamp))
+				g.Expect(fetched.Annotations[LastRestartTimestamp]).NotTo(Equal(previousLastRestart))
 				g.Expect(fetched.Spec.Template.Annotations).To(HaveKey(RestartedAtTemplate))
 				g.Expect(fetched.Spec.Template.Annotations).To(HaveKeyWithValue(ManagedByAnnotation, ManagedByValue))
 				firstRestartTime = fetched.Spec.Template.Annotations[RestartedAtTemplate]
+				previousLastRestart = fetched.Annotations[LastRestartTimestamp]
 			}, Timeout, Interval).Should(Succeed())
 
 			By("Waiting for a second restart to confirm recurrence")
 			Eventually(func(g Gomega) {
 				fetched := &appsv1.Deployment{}
 				g.Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
+				g.Expect(fetched.Annotations).To(HaveKey(LastRestartTimestamp))
+				g.Expect(fetched.Annotations[LastRestartTimestamp]).NotTo(Equal(previousLastRestart))
 				g.Expect(fetched.Spec.Template.Annotations).To(HaveKey(RestartedAtTemplate))
 				g.Expect(fetched.Spec.Template.Annotations[RestartedAtTemplate]).NotTo(Equal(firstRestartTime))
 			}, Timeout, Interval).Should(Succeed())

@@ -106,6 +106,42 @@ func TestManagedByRestartAfterConversionStaysTopLevelOnly(t *testing.T) {
 	}
 }
 
+func TestManagedByRecurringRestartInitializationStaysTopLevelOnly(t *testing.T) {
+	ctx := context.Background()
+	key := types.NamespacedName{Name: "managed-by-recurring-init", Namespace: "default"}
+	obj := testDeployment(key.Name, map[string]string{RestartEveryAnnotation: "1h"})
+	setTemplate(t, obj)
+	r := &LifecycleReconciler{
+		Client: fake.NewClientBuilder().WithObjects(obj.DeepCopy()).Build(),
+	}
+
+	if _, err := r.reconcileRecurringRestart(ctx, obj, false, "interval", time.Hour, logr.Discard()); err != nil {
+		t.Fatalf("reconcile recurring restart: %v", err)
+	}
+
+	fetched := getObject(t, r, key)
+	annotations := fetched.GetAnnotations()
+	if got := annotations[ManagedByAnnotation]; got != ManagedByValue {
+		t.Fatalf("managed-by = %q, want %q", got, ManagedByValue)
+	}
+	if _, found := annotations[LastRestartTimestamp]; !found {
+		t.Fatalf("last restart timestamp missing")
+	}
+
+	templateAnnotations, found, err := unstructured.NestedStringMap(fetched.Object, "spec", "template", "metadata", "annotations")
+	if err != nil {
+		t.Fatalf("get template annotations: %v", err)
+	}
+	if found {
+		if got := templateAnnotations[ManagedByAnnotation]; got != "" {
+			t.Fatalf("template managed-by = %q, want empty for recurring initialization", got)
+		}
+		if got := templateAnnotations[RestartedAtTemplate]; got != "" {
+			t.Fatalf("template restartedAt = %q, want empty for recurring initialization", got)
+		}
+	}
+}
+
 func TestManagedByAddedToTopLevelAndTemplateForRestartTrigger(t *testing.T) {
 	ctx := context.Background()
 	key := types.NamespacedName{Name: "managed-by-restart-trigger", Namespace: "default"}
