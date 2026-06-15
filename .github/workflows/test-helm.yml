@@ -16,7 +16,7 @@ env:
 
 jobs:
   template-test:
-    name: Template Render
+    name: Helm template
     runs-on: ubuntu-latest
     steps:
       - name: Clone the code
