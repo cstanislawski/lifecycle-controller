@@ -19,7 +19,7 @@ env:
 
 jobs:
   test-e2e-helm:
-    name: Run on Ubuntu
+    name: Helm E2E tests
     runs-on: ubuntu-latest
     env:
       GOFLAGS: -mod=readonly
