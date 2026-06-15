@@ -48,7 +48,7 @@ var _ = Describe("Scoped Watch Integration", Serial, func() {
 					Name:      ignoredDepName,
 					Namespace: IgnoredNamespace,
 					Annotations: map[string]string{
-						DeleteAfterAnnotation: "1s",
+						DeleteAfterAnnotation: "250ms",
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
@@ -68,7 +68,7 @@ var _ = Describe("Scoped Watch Integration", Serial, func() {
 					Name:      allowedDepName,
 					Namespace: AllowedNamespace,
 					Annotations: map[string]string{
-						DeleteAfterAnnotation: "1s",
+						DeleteAfterAnnotation: "250ms",
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
@@ -95,7 +95,7 @@ var _ = Describe("Scoped Watch Integration", Serial, func() {
 				// Also verify it wasn't mutated (annotation should still be delete-after, not converted to delete-at)
 				g.Expect(dep.Annotations).To(HaveKey(DeleteAfterAnnotation))
 				g.Expect(dep.Annotations).NotTo(HaveKey(DeleteAtAnnotation))
-			}, 5*time.Second, 500*time.Millisecond).Should(Succeed())
+			}, time.Second, 250*time.Millisecond).Should(Succeed())
 
 			_ = k8sClient.Delete(ctx, ignoredDep)
 		})

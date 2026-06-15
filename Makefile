@@ -101,7 +101,7 @@ cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	$(MAKE) cleanup KIND_CLUSTER=$(E2E_KIND_CLUSTER)
 
 .PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests.
+test-e2e: setup-test-e2e ## Run the e2e tests.
 	KIND=$(KIND) KIND_CLUSTER=$(E2E_KIND_CLUSTER) IMG=$(IMG) NAMESPACE=$(NAMESPACE) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
 	$(MAKE) cleanup-test-e2e
 
@@ -184,7 +184,10 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 	$(KUSTOMIZE) build config/crd | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
 .PHONY: deploy
-deploy: manifests kustomize docker-build kind-load ## Deploy controller to the K8s cluster specified in ~/.kube/config. Builds and loads image.
+deploy: docker-build kind-load deploy-manifests ## Deploy controller to the K8s cluster specified in ~/.kube/config. Builds and loads image.
+
+.PHONY: deploy-manifests
+deploy-manifests: manifests kustomize ## Deploy controller manifests using an image that is already available to the cluster.
 	rm -rf $(LOCALBIN)/tmp
 	mkdir -p $(LOCALBIN)/tmp
 	cp -R config $(LOCALBIN)/tmp/config
@@ -299,6 +302,6 @@ undeploy-helm: ## Undeploy controller using Helm.
 	$(HELM) uninstall lifecycle-controller --namespace $(NAMESPACE) --ignore-not-found
 
 .PHONY: test-e2e-helm
-test-e2e-helm: setup-test-e2e manifests generate fmt vet ## Run the Helm e2e tests.
+test-e2e-helm: setup-test-e2e ## Run the Helm e2e tests.
 	KIND=$(KIND) KIND_CLUSTER=$(E2E_KIND_CLUSTER) IMG=$(IMG) go test -tags=e2e_helm ./test/e2e-helm/ -v -ginkgo.v
 	$(MAKE) cleanup-test-e2e

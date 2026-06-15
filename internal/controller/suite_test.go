@@ -76,7 +76,9 @@ var _ = BeforeSuite(func() {
 		Client:   k8sManager.GetClient(),
 		Scheme:   k8sManager.GetScheme(),
 		Recorder: k8sManager.GetEventRecorderFor("lifecycle-controller-test"),
-		// Config: initialized as empty (allow all) by default
+		Config: ScopeConfig{
+			WatchResources: []string{"deployments.apps", "configmaps", "namespaces"},
+		},
 	}
 
 	err = Reconciler.SetupWithManager(k8sManager)

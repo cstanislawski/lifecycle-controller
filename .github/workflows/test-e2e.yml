@@ -24,6 +24,8 @@ jobs:
   test-e2e:
     name: Run on Ubuntu
     runs-on: ubuntu-latest
+    env:
+      GOFLAGS: -mod=readonly
     steps:
       - name: Clone the code
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -43,6 +45,4 @@ jobs:
         run: kind version
 
       - name: Running Test e2e
-        run: |
-          go mod tidy
-          make test-e2e
+        run: make test-e2e

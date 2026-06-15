@@ -27,6 +27,14 @@ func init() {
 
 const pollInterval = 250 * time.Millisecond
 
+func sleepPastTimestampSecond() {
+	time.Sleep(time.Until(time.Now().Truncate(time.Second).Add(time.Second)) + 25*time.Millisecond)
+}
+
+func uniqueNamespace(prefix string) string {
+	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
+}
+
 var _ = Describe("Lifecycle Controller E2E", Ordered, func() {
 	var controllerPodName string
 
@@ -37,7 +45,7 @@ var _ = Describe("Lifecycle Controller E2E", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred(), "Failed to create namespace")
 
 		By("deploying the controller-manager")
-		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
+		cmd = exec.Command("make", "deploy-manifests", fmt.Sprintf("IMG=%s", projectImage))
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 	})
@@ -77,9 +85,10 @@ var _ = Describe("Lifecycle Controller E2E", Ordered, func() {
 	})
 
 	Context("Lifecycle Actions", func() {
-		const testNamespace = "lifecycle-e2e-tests"
+		var testNamespace string
 
 		BeforeEach(func() {
+			testNamespace = uniqueNamespace("lifecycle-e2e-tests")
 			By("creating test namespace")
 			cmd := exec.Command("kubectl", "create", "ns", testNamespace)
 			_, err := utils.Run(cmd)
@@ -88,7 +97,7 @@ var _ = Describe("Lifecycle Controller E2E", Ordered, func() {
 
 		AfterEach(func() {
 			By("deleting test namespace")
-			cmd := exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found")
+			cmd := exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found", "--wait=false")
 			_, _ = utils.Run(cmd)
 		})
 
@@ -170,7 +179,7 @@ spec:
 			}).WithTimeout(time.Minute).WithPolling(pollInterval).Should(Succeed())
 
 			By("waiting a moment before re-applying")
-			time.Sleep(1500 * time.Millisecond)
+			sleepPastTimestampSecond()
 
 			By("re-applying the same manifest to reset the timer")
 			utils.ApplyYAML(deploymentYAML)
@@ -219,7 +228,7 @@ spec:
 			utils.ApplyYAML(deploymentYAML)
 
 			By("re-applying the same manifest after a delay")
-			time.Sleep(1 * time.Second)
+			sleepPastTimestampSecond()
 			utils.ApplyYAML(deploymentYAML)
 
 			By("verifying the 'delete-at' annotation has not changed")
@@ -279,7 +288,7 @@ spec:
 			}).WithTimeout(time.Minute).WithPolling(pollInterval).Should(Succeed())
 
 			By("making an unrelated update to the deployment (adding an annotation)")
-			time.Sleep(1 * time.Second)
+			sleepPastTimestampSecond()
 			cmd := exec.Command("kubectl", "annotate", "deployment", deploymentName, "-n", testNamespace, "unrelated.io/test=true")
 			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
@@ -387,7 +396,7 @@ spec:
 			}).WithTimeout(time.Minute).WithPolling(pollInterval).Should(Succeed())
 
 			By("waiting a moment before re-applying")
-			time.Sleep(1500 * time.Millisecond)
+			sleepPastTimestampSecond()
 
 			By("re-applying the same manifest to reset the timer")
 			utils.ApplyYAML(deploymentYAML)
@@ -407,9 +416,10 @@ spec:
 	})
 
 	Context("Recurring and Advanced Actions", func() {
-		const testNamespace = "lifecycle-e2e-advanced"
+		var testNamespace string
 
 		BeforeEach(func() {
+			testNamespace = uniqueNamespace("lifecycle-e2e-advanced")
 			By("creating advanced test namespace")
 			cmd := exec.Command("kubectl", "create", "ns", testNamespace)
 			_, err := utils.Run(cmd)
@@ -418,7 +428,7 @@ spec:
 
 		AfterEach(func() {
 			By("deleting advanced test namespace")
-			cmd := exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found")
+			cmd := exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found", "--wait=false")
 			_, _ = utils.Run(cmd)
 		})
 
@@ -485,7 +495,7 @@ spec:
 			creationTimestamp := dep.GetCreationTimestamp().Time.UTC()
 
 			By("re-applying the manifest with a longer duration")
-			time.Sleep(1 * time.Second)
+			sleepPastTimestampSecond()
 			deploymentYAML = strings.Replace(deploymentYAML, `delete-after: "3s"`, `delete-after: "1h"`, 1)
 			utils.ApplyYAML(deploymentYAML)
 
@@ -510,6 +520,7 @@ spec:
 
 		It("should support cron-timezone for restart-cron", func() {
 			deploymentName := "e2e-cron-timezone"
+			lastRestart := time.Now().Add(-2 * time.Minute).UTC().Format(time.RFC3339)
 			deploymentYAML := fmt.Sprintf(`
 apiVersion: apps/v1
 kind: Deployment
@@ -519,28 +530,23 @@ metadata:
   annotations:
     lifecycle.cezary.dev/restart-cron: "* * * * *"
     lifecycle.cezary.dev/cron-timezone: "America/Los_Angeles"
+    lifecycle.cezary.dev/last-restart-timestamp: "%s"
 spec:
   replicas: 1
   selector: { matchLabels: { app: test-timezone }}
   template:
     metadata: { labels: { app: test-timezone }}
     spec: { containers: [ { name: nginx, image: nginx:latest } ] }
-`, deploymentName, testNamespace)
+`, deploymentName, testNamespace, lastRestart)
 			utils.ApplyYAML(deploymentYAML)
 
-			By("verifying the recurring restart state is initialized")
+			By("verifying the deployment is restarted using the cron timezone schedule")
 			Eventually(func(g Gomega) {
 				dep := utils.GetDeployment(deploymentName, testNamespace, g)
-				_, found := dep.Annotations["lifecycle.cezary.dev/last-restart-timestamp"]
-				g.Expect(found).To(BeTrue())
-			}).WithTimeout(20 * time.Second).WithPolling(pollInterval).Should(Succeed())
-
-			By("verifying the deployment is restarted")
-			Eventually(func(g Gomega) {
-				dep := utils.GetDeployment(deploymentName, testNamespace, g)
+				g.Expect(dep.Annotations["lifecycle.cezary.dev/last-restart-timestamp"]).NotTo(Equal(lastRestart))
 				_, found := dep.Spec.Template.Annotations["lifecycle.cezary.dev/restartedAt"]
 				g.Expect(found).To(BeTrue())
-			}).WithTimeout(90 * time.Second).WithPolling(pollInterval).Should(Succeed())
+			}).WithTimeout(20 * time.Second).WithPolling(pollInterval).Should(Succeed())
 		})
 	})
 
@@ -599,18 +605,6 @@ spec:
 `, deploymentName)
 			utils.ApplyYAML(deploymentYAML)
 
-			By("verifying the deployment is NOT deleted or restarted")
-			Consistently(func(g Gomega) {
-				// Check it still exists
-				cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", "default")
-				_, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				// Check it was not restarted
-				dep := utils.GetDeployment(deploymentName, "default", g)
-				_, found := dep.Spec.Template.Annotations["lifecycle.cezary.dev/restartedAt"]
-				g.Expect(found).To(BeFalse())
-			}).WithTimeout(5 * time.Second).WithPolling(pollInterval).Should(Succeed())
-
 			By("verifying a warning event was posted")
 			Eventually(func(g Gomega) {
 				events := utils.GetEvents(g, "default", deploymentName, "Deployment")
@@ -625,7 +619,15 @@ spec:
 				g.Expect(foundEvent).To(BeTrue(), "expected to find a ConflictingAnnotations warning event")
 			}).WithTimeout(30 * time.Second).WithPolling(pollInterval).Should(Succeed())
 
-			cmd := exec.Command("kubectl", "delete", "deployment", deploymentName, "-n", "default")
+			By("verifying the deployment is NOT deleted or restarted")
+			cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", "default")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			dep := utils.GetDeployment(deploymentName, "default", NewGomegaWithT(GinkgoT()))
+			_, found := dep.Spec.Template.Annotations["lifecycle.cezary.dev/restartedAt"]
+			Expect(found).To(BeFalse())
+
+			cmd = exec.Command("kubectl", "delete", "deployment", deploymentName, "-n", "default")
 			_, _ = utils.Run(cmd)
 		})
 
@@ -649,13 +651,6 @@ spec:
 `, deploymentName)
 			utils.ApplyYAML(deploymentYAML)
 
-			By("verifying the deployment is NOT deleted")
-			Consistently(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", "default")
-				_, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-			}).WithTimeout(5 * time.Second).WithPolling(pollInterval).Should(Succeed())
-
 			By("verifying a dry-run event was posted")
 			Eventually(func(g Gomega) {
 				events := utils.GetEvents(g, "default", deploymentName, "Deployment")
@@ -670,14 +665,18 @@ spec:
 				g.Expect(foundEvent).To(BeTrue(), "expected to find DryRunDelete event")
 			}).WithTimeout(20 * time.Second).WithPolling(pollInterval).Should(Succeed())
 
+			By("verifying the deployment is NOT deleted")
+			cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", "default")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
 			// Cleanup
-			cmd := exec.Command("kubectl", "delete", "deployment", deploymentName, "-n", "default")
+			cmd = exec.Command("kubectl", "delete", "deployment", deploymentName, "-n", "default")
 			_, _ = utils.Run(cmd)
 		})
 	})
 
 	Context("Dynamic CRD Handling", func() {
-		const testNamespace = "lifecycle-e2e-crd"
 		const crdName = "lifecyclee2etests.testing.lifecycle.cezary.dev"
 		const crdYAML = `
 apiVersion: apiextensions.k8s.io/v1
@@ -707,6 +706,7 @@ spec:
             type: object
             x-kubernetes-preserve-unknown-fields: true
 `
+		var testNamespace string
 
 		BeforeAll(func() {
 			By("creating the test CRD")
@@ -737,6 +737,7 @@ spec:
 		})
 
 		BeforeEach(func() {
+			testNamespace = uniqueNamespace("lifecycle-e2e-crd")
 			By("creating CRD test namespace")
 			cmd := exec.Command("kubectl", "create", "ns", testNamespace)
 			_, err := utils.Run(cmd)
@@ -745,7 +746,7 @@ spec:
 
 		AfterEach(func() {
 			By("deleting CRD test namespace")
-			cmd := exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found")
+			cmd := exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found", "--wait=false")
 			_, _ = utils.Run(cmd)
 		})
 

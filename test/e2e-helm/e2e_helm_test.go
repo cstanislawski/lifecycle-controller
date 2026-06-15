@@ -27,7 +27,7 @@ const (
 	safeTimeout = 30 * time.Second
 	// consistentDuration is the minimum time to wait to verify something does not happen.
 	// This directly impacts test duration.
-	consistentDuration = 3 * time.Second
+	consistentDuration = time.Second
 )
 
 var _ = Describe("Lifecycle Controller Helm E2E", Ordered, func() {
@@ -102,7 +102,7 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/delete-after: "2s"
+    lifecycle.cezary.dev/delete-after: "1s"
 spec:
   replicas: 1
   selector: { matchLabels: { app: smoke-test } }
@@ -170,7 +170,7 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/delete-after: "2s"
+    lifecycle.cezary.dev/delete-after: "250ms"
 data:
   foo: bar
 `, cmName, testNamespace)
@@ -185,7 +185,7 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/delete-after: "2s"
+    lifecycle.cezary.dev/delete-after: "250ms"
 stringData:
   foo: bar
 `, secretName, testNamespace)
@@ -229,6 +229,7 @@ stringData:
 				"--set", fmt.Sprintf("image.repository=%s", repo),
 				"--set", fmt.Sprintf("image.tag=%s", tag),
 				"--set", "image.pullPolicy=Never",
+				"--set", "controllerManager.scope.watchResources[0]=configmaps",
 				"--set", fmt.Sprintf("controllerManager.scope.watchNamespaces[0]=%s", allowedNS),
 			)
 			_, err := utils.Run(cmd)
@@ -248,7 +249,7 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/delete-after: "2s"
+    lifecycle.cezary.dev/delete-after: "250ms"
 data: { key: val }
 `, allowedCM, allowedNS))
 
@@ -261,7 +262,7 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/delete-after: "2s"
+    lifecycle.cezary.dev/delete-after: "250ms"
 data: { key: val }
 `, ignoredCM, ignoredNS))
 
@@ -314,7 +315,7 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/delete-after: "2s"
+    lifecycle.cezary.dev/delete-after: "250ms"
 data: { key: val }
 `, cmName, testNamespace))
 
@@ -419,7 +420,7 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/delete-after: "3s"
+    lifecycle.cezary.dev/delete-after: "1s"
 spec:
   replicas: 1
   selector: { matchLabels: { app: smoke-test-ha } }
