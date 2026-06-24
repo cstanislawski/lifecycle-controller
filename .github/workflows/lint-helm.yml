@@ -16,7 +16,7 @@ env:
 
 jobs:
   lint:
-    name: Lint
+    name: Helm lint
     runs-on: ubuntu-latest
     steps:
       - name: Clone the code
