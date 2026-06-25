@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"strings"
 
@@ -155,6 +156,12 @@ func GetNonEmptyLines(output string) []string {
 	return res
 }
 
+// WaitForRFC3339Tick waits until time.Now().Format(time.RFC3339) changes.
+func WaitForRFC3339Tick() {
+	nextSecond := time.Now().Truncate(time.Second).Add(time.Second)
+	time.Sleep(time.Until(nextSecond) + 20*time.Millisecond)
+}
+
 // GetProjectDir will return the directory where the project is.
 func GetProjectDir() (string, error) {
 	path, err := os.Getwd()
@@ -275,22 +282,9 @@ func GetDeployment(name, namespace string, g Gomega) *appsv1.Deployment {
 
 // GetPodForRelease is a helper to fetch the first pod for a given helm release.
 func GetPodForRelease(g Gomega, releaseName, namespace string) *corev1.Pod {
-	// Filter out pods that are terminating (have a deletionTimestamp)
-	// This prevents race conditions where we pick up a dying pod from a previous test run
-	goTemplate := "go-template={{ range .items }}{{ if not .metadata.deletionTimestamp }}" +
-		"{{ .metadata.name }}{{ \"\\n\" }}{{ end }}{{ end }}"
-
-	cmd := exec.Command("kubectl", "get", "pods",
-		"-l", fmt.Sprintf("app.kubernetes.io/instance=%s", releaseName),
-		"-o", goTemplate,
-		"-n", namespace,
-	)
-	podOutput, err := Run(cmd)
-	g.Expect(err).NotTo(HaveOccurred())
-	podNames := GetNonEmptyLines(podOutput)
-	g.Expect(podNames).To(HaveLen(1), "expected 1 running pod for the helm release")
-
-	return GetPod(g, podNames[0], namespace)
+	pods := GetPodsForRelease(g, releaseName, namespace)
+	g.Expect(pods).To(HaveLen(1), "expected 1 running pod for the helm release")
+	return &pods[0]
 }
 
 // GetPod is a helper to fetch a pod by name and unmarshal it.

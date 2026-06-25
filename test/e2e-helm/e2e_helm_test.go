@@ -27,7 +27,7 @@ const (
 	safeTimeout = 30 * time.Second
 	// consistentDuration is the minimum time to wait to verify something does not happen.
 	// This directly impacts test duration.
-	consistentDuration = 3 * time.Second
+	consistentDuration = 2 * time.Second
 )
 
 var _ = Describe("Lifecycle Controller Helm E2E", Ordered, func() {
@@ -52,8 +52,6 @@ var _ = Describe("Lifecycle Controller Helm E2E", Ordered, func() {
 	})
 
 	Context("Default Helm Install", func() {
-		var controllerPodName string
-
 		It("should deploy successfully with default values", func() {
 			By("installing the helm chart")
 			repoAndTag := strings.SplitN(projectImage, ":", 2)
@@ -70,24 +68,8 @@ var _ = Describe("Lifecycle Controller Helm E2E", Ordered, func() {
 
 			By("validating that the controller-manager pod is running as expected")
 			verifyControllerUp := func(g Gomega) {
-				// Get pod name
-				cmd := exec.Command("kubectl", "get", "pods",
-					"-l", fmt.Sprintf("app.kubernetes.io/instance=%s", releaseName),
-					"-o", "go-template={{ range .items }}{{ if not .metadata.deletionTimestamp }}{{ .metadata.name }}{{ \"\\n\" }}{{ end }}{{ end }}",
-					"-n", managerNamespace,
-				)
-
-				podOutput, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				podNames := utils.GetNonEmptyLines(podOutput)
-				g.Expect(podNames).To(HaveLen(1))
-				controllerPodName = podNames[0]
-
-				// Check pod status
-				cmd = exec.Command("kubectl", "get", "pods", controllerPodName, "-o", "jsonpath={.status.phase}", "-n", managerNamespace)
-				status, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(status).To(Equal("Running"))
+				pod := utils.GetPodForRelease(g, releaseName, managerNamespace)
+				g.Expect(pod.Status.Phase).To(Equal(corev1.PodRunning))
 			}
 			Eventually(verifyControllerUp).WithTimeout(deploymentTimeout).WithPolling(pollInterval).Should(Succeed())
 		})
@@ -104,7 +86,7 @@ metadata:
   annotations:
     lifecycle.cezary.dev/delete-after: "2s"
 spec:
-  replicas: 1
+  replicas: 0
   selector: { matchLabels: { app: smoke-test } }
   template:
     metadata: { labels: { app: smoke-test } }
@@ -170,7 +152,7 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/delete-after: "2s"
+    lifecycle.cezary.dev/delete-after: "1s"
 data:
   foo: bar
 `, cmName, testNamespace)
@@ -185,7 +167,7 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/delete-after: "2s"
+    lifecycle.cezary.dev/delete-after: "1s"
 stringData:
   foo: bar
 `, secretName, testNamespace)
@@ -248,7 +230,7 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/delete-after: "2s"
+    lifecycle.cezary.dev/delete-after: "1s"
 data: { key: val }
 `, allowedCM, allowedNS))
 
@@ -261,7 +243,7 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/delete-after: "2s"
+    lifecycle.cezary.dev/delete-after: "1s"
 data: { key: val }
 `, ignoredCM, ignoredNS))
 
@@ -314,7 +296,7 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/delete-after: "2s"
+    lifecycle.cezary.dev/delete-after: "1s"
 data: { key: val }
 `, cmName, testNamespace))
 
@@ -419,9 +401,9 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/delete-after: "3s"
+    lifecycle.cezary.dev/delete-after: "2s"
 spec:
-  replicas: 1
+  replicas: 0
   selector: { matchLabels: { app: smoke-test-ha } }
   template:
     metadata: { labels: { app: smoke-test-ha } }

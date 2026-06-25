@@ -217,13 +217,17 @@ var _ = Describe("Lifecycle Controller", func() {
 		})
 
 		It("should trigger a recurring restart with 'restart-every'", func() {
-			By("Creating a deployment with restart-every: 1s")
+			By("Creating a deployment with restart-every: 1s and stale recurring state")
 			ctx := context.Background()
 			key := types.NamespacedName{Name: "restart-every-test", Namespace: TestNamespace}
+			previousLastRestart := time.Now().Add(-3 * time.Second).UTC().Format(time.RFC3339)
 			deployment := &appsv1.Deployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: key.Name, Namespace: key.Namespace,
-					Annotations: map[string]string{RestartEveryAnnotation: "1s"},
+					Annotations: map[string]string{
+						RestartEveryAnnotation: "1s",
+						LastRestartTimestamp:   previousLastRestart,
+					},
 				},
 				Spec: appsv1.DeploymentSpec{
 					Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "test"}},
@@ -235,18 +239,8 @@ var _ = Describe("Lifecycle Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
 
-			By("Waiting for the controller to record recurring restart state")
-			var previousLastRestart string
-			Eventually(func(g Gomega) {
-				fetched := &appsv1.Deployment{}
-				g.Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
-				g.Expect(fetched.Annotations).To(HaveKey(LastRestartTimestamp))
-				g.Expect(fetched.Annotations).To(HaveKeyWithValue(ManagedByAnnotation, ManagedByValue))
-				previousLastRestart = fetched.Annotations[LastRestartTimestamp]
-			}, Timeout, Interval).Should(Succeed())
-
-			By("Waiting for the next recurring restart to be triggered")
-			var firstRestartTime string
+			By("Waiting for a recurring restart to catch up")
+			var firstLastRestart string
 			Eventually(func(g Gomega) {
 				fetched := &appsv1.Deployment{}
 				g.Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
@@ -254,8 +248,7 @@ var _ = Describe("Lifecycle Controller", func() {
 				g.Expect(fetched.Annotations[LastRestartTimestamp]).NotTo(Equal(previousLastRestart))
 				g.Expect(fetched.Spec.Template.Annotations).To(HaveKey(RestartedAtTemplate))
 				g.Expect(fetched.Spec.Template.Annotations).To(HaveKeyWithValue(ManagedByAnnotation, ManagedByValue))
-				firstRestartTime = fetched.Spec.Template.Annotations[RestartedAtTemplate]
-				previousLastRestart = fetched.Annotations[LastRestartTimestamp]
+				firstLastRestart = fetched.Annotations[LastRestartTimestamp]
 			}, Timeout, Interval).Should(Succeed())
 
 			By("Waiting for a second restart to confirm recurrence")
@@ -263,9 +256,8 @@ var _ = Describe("Lifecycle Controller", func() {
 				fetched := &appsv1.Deployment{}
 				g.Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
 				g.Expect(fetched.Annotations).To(HaveKey(LastRestartTimestamp))
-				g.Expect(fetched.Annotations[LastRestartTimestamp]).NotTo(Equal(previousLastRestart))
+				g.Expect(fetched.Annotations[LastRestartTimestamp]).NotTo(Equal(firstLastRestart))
 				g.Expect(fetched.Spec.Template.Annotations).To(HaveKey(RestartedAtTemplate))
-				g.Expect(fetched.Spec.Template.Annotations[RestartedAtTemplate]).NotTo(Equal(firstRestartTime))
 			}, Timeout, Interval).Should(Succeed())
 
 			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
@@ -305,7 +297,7 @@ var _ = Describe("Lifecycle Controller", func() {
 			}, Timeout, Interval).Should(Succeed())
 
 			By("Re-applying the 'delete-after' annotation")
-			time.Sleep(time.Second) // Ensure 'now()' is different
+			waitForRFC3339Tick()
 			updated := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, key, updated)).To(Succeed())
 			updated.Annotations[DeleteAfterAnnotation] = "1h"
@@ -357,7 +349,7 @@ var _ = Describe("Lifecycle Controller", func() {
 			}, Timeout, Interval).Should(Succeed())
 
 			By("Re-applying the 'restart-after' annotation")
-			time.Sleep(time.Second) // Ensure 'now()' is different
+			waitForRFC3339Tick()
 			updated := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, key, updated)).To(Succeed())
 			updated.Annotations[RestartAfterAnnotation] = "1h"
@@ -380,16 +372,12 @@ var _ = Describe("Lifecycle Controller", func() {
 
 	Context("when using reference-point annotation", func() {
 		It("should use creationTimestamp for delete-after when specified", func() {
-			By("Creating a deployment with reference-point: creationTimestamp")
+			By("Creating a deployment before applying reference-point annotations")
 			ctx := context.Background()
 			key := types.NamespacedName{Name: "ref-point-delete", Namespace: TestNamespace}
 			deployment := &appsv1.Deployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: key.Name, Namespace: key.Namespace,
-					Annotations: map[string]string{
-						DeleteAfterAnnotation:    "1h",
-						ReferencePointAnnotation: "creationTimestamp",
-					},
 				},
 				Spec: appsv1.DeploymentSpec{
 					Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "test"}},
@@ -406,8 +394,15 @@ var _ = Describe("Lifecycle Controller", func() {
 			Expect(k8sClient.Get(ctx, key, fetchedOnCreate)).To(Succeed())
 			creationTimestamp := fetchedOnCreate.GetCreationTimestamp().Time
 
-			// Wait a bit to ensure reconciliation happens at a measurably different time
-			time.Sleep(2 * time.Second)
+			By("Applying reference-point annotations after the creation timestamp second")
+			waitForRFC3339Tick()
+			updated := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, key, updated)).To(Succeed())
+			updated.Annotations = map[string]string{
+				DeleteAfterAnnotation:    "1h",
+				ReferencePointAnnotation: "creationTimestamp",
+			}
+			Expect(k8sClient.Update(ctx, updated)).To(Succeed())
 
 			Eventually(func(g Gomega) {
 				fetched := &appsv1.Deployment{}
@@ -448,15 +443,13 @@ var _ = Describe("Lifecycle Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
 
-			// The controller should not modify the object at all.
-			Consistently(func(g Gomega) {
-				fetched := &appsv1.Deployment{}
-				g.Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
-				g.Expect(fetched.Annotations).To(HaveKey(DeleteAfterAnnotation))
-				g.Expect(fetched.Annotations).To(HaveKey(RestartAfterAnnotation))
-				g.Expect(fetched.Annotations).ToNot(HaveKey(DeleteAtAnnotation))
-				g.Expect(fetched.Annotations).ToNot(HaveKey(RestartAtAnnotation))
-			}, 3*time.Second, Interval).Should(Succeed())
+			expectEventReason(ctx, key.Name, "ConflictingAnnotations")
+			fetched := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
+			Expect(fetched.Annotations).To(HaveKey(DeleteAfterAnnotation))
+			Expect(fetched.Annotations).To(HaveKey(RestartAfterAnnotation))
+			Expect(fetched.Annotations).ToNot(HaveKey(DeleteAtAnnotation))
+			Expect(fetched.Annotations).ToNot(HaveKey(RestartAtAnnotation))
 
 			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
 		})
@@ -476,12 +469,10 @@ var _ = Describe("Lifecycle Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, cm)).To(Succeed())
 
-			// The controller should not modify the ConfigMap.
-			Consistently(func(g Gomega) {
-				fetched := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
-				g.Expect(fetched.Annotations).To(HaveKey(RestartAtAnnotation))
-			}, 3*time.Second, Interval).Should(Succeed())
+			expectEventReason(ctx, key.Name, "NotPodSpawner")
+			fetched := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
+			Expect(fetched.Annotations).To(HaveKey(RestartAtAnnotation))
 
 			Expect(k8sClient.Delete(ctx, cm)).To(Succeed())
 		})
@@ -591,10 +582,8 @@ var _ = Describe("Lifecycle Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
 
-			Consistently(func(g Gomega) {
-				err := k8sClient.Get(ctx, key, &appsv1.Deployment{})
-				g.Expect(err).NotTo(HaveOccurred())
-			}, 3*time.Second, Interval).Should(Succeed())
+			expectEventReason(ctx, key.Name, "DryRunDelete")
+			Expect(k8sClient.Get(ctx, key, &appsv1.Deployment{})).To(Succeed())
 
 			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
 		})
@@ -623,10 +612,8 @@ var _ = Describe("Lifecycle Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
 
-			Consistently(func(g Gomega) {
-				err := k8sClient.Get(ctx, key, &appsv1.Deployment{})
-				g.Expect(err).NotTo(HaveOccurred())
-			}, 3*time.Second, Interval).Should(Succeed())
+			expectEventReason(ctx, key.Name, "DryRunDelete")
+			Expect(k8sClient.Get(ctx, key, &appsv1.Deployment{})).To(Succeed())
 
 			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
 		})

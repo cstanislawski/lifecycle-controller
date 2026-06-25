@@ -1,4 +1,4 @@
-name: Tests
+name: Preflight
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -11,11 +11,18 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'Makefile'
-      - '.github/workflows/test.yml'
+      - 'api/**'
+      - 'cmd/**'
+      - 'config/**'
+      - 'internal/**'
+      - 'test/e2e/**'
+      - 'test/e2e-helm/**'
+      - 'test/utils/**'
+      - '.github/workflows/preflight.yml'
 
 jobs:
-  test:
-    name: Unit tests
+  preflight:
+    name: Generated, fmt, vet
     runs-on: ubuntu-latest
     steps:
       - name: Clone the code
@@ -26,5 +33,5 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Running Tests
-        run: make test-unit
+      - name: Run preflight
+        run: make ci-preflight

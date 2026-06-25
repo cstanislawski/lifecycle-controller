@@ -60,8 +60,15 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 .PHONY: test
-test: manifests generate fmt vet setup-envtest ## Run tests.
+test: manifests generate fmt vet test-unit ## Run tests.
+
+.PHONY: test-unit
+test-unit: setup-envtest ## Run unit tests without code generation or lint preflight.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
+
+.PHONY: ci-preflight
+ci-preflight: manifests generate fmt vet ## Verify generated files, formatting, and vet for CI.
+	git diff --exit-code
 
 # Default cluster name for local development
 KIND_CLUSTER ?= lifecycle-controller
@@ -102,8 +109,15 @@ cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests.
+	trap '$(MAKE) cleanup-test-e2e' EXIT; $(MAKE) run-test-e2e
+
+.PHONY: ci-test-e2e
+ci-test-e2e: setup-test-e2e ## Run e2e tests with CI preflight handled by other workflows.
+	trap '$(MAKE) cleanup-test-e2e' EXIT; $(MAKE) run-test-e2e
+
+.PHONY: run-test-e2e
+run-test-e2e: ## Run the e2e test binary against the configured cluster.
 	KIND=$(KIND) KIND_CLUSTER=$(E2E_KIND_CLUSTER) IMG=$(IMG) NAMESPACE=$(NAMESPACE) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
-	$(MAKE) cleanup-test-e2e
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
@@ -300,5 +314,12 @@ undeploy-helm: ## Undeploy controller using Helm.
 
 .PHONY: test-e2e-helm
 test-e2e-helm: setup-test-e2e manifests generate fmt vet ## Run the Helm e2e tests.
+	trap '$(MAKE) cleanup-test-e2e' EXIT; $(MAKE) run-test-e2e-helm
+
+.PHONY: ci-test-e2e-helm
+ci-test-e2e-helm: setup-test-e2e ## Run Helm e2e tests with CI preflight handled by other workflows.
+	trap '$(MAKE) cleanup-test-e2e' EXIT; $(MAKE) run-test-e2e-helm
+
+.PHONY: run-test-e2e-helm
+run-test-e2e-helm: ## Run the Helm e2e test binary against the configured cluster.
 	KIND=$(KIND) KIND_CLUSTER=$(E2E_KIND_CLUSTER) IMG=$(IMG) go test -tags=e2e_helm ./test/e2e-helm/ -v -ginkgo.v
-	$(MAKE) cleanup-test-e2e

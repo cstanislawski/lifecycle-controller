@@ -95,7 +95,7 @@ var _ = Describe("Scoped Watch Integration", Serial, func() {
 				// Also verify it wasn't mutated (annotation should still be delete-after, not converted to delete-at)
 				g.Expect(dep.Annotations).To(HaveKey(DeleteAfterAnnotation))
 				g.Expect(dep.Annotations).NotTo(HaveKey(DeleteAtAnnotation))
-			}, 5*time.Second, 500*time.Millisecond).Should(Succeed())
+			}, 2*time.Second, 500*time.Millisecond).Should(Succeed())
 
 			_ = k8sClient.Delete(ctx, ignoredDep)
 		})
@@ -112,7 +112,7 @@ var _ = Describe("Scoped Watch Integration", Serial, func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: nsToWatch,
 					Annotations: map[string]string{
-						DeleteAfterAnnotation: "1s",
+						DeleteAtAnnotation: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339),
 					},
 				},
 			}

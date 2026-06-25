@@ -47,5 +47,4 @@ jobs:
           sudo mv ./kind /usr/local/bin/kind
 
       - name: Running Helm Test e2e
-        run: |
-          make test-e2e-helm
+        run: make ci-test-e2e-helm

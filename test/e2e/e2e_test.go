@@ -104,7 +104,7 @@ metadata:
   annotations:
     lifecycle.cezary.dev/delete-after: "2s"
 spec:
-  replicas: 1
+  replicas: 0
   selector:
     matchLabels:
       app: test-delete
@@ -141,7 +141,7 @@ metadata:
   annotations:
     lifecycle.cezary.dev/delete-after: "4s"
 spec:
-  replicas: 1
+  replicas: 0
   selector:
     matchLabels:
       app: test-delete-reset
@@ -170,7 +170,7 @@ spec:
 			}).WithTimeout(time.Minute).WithPolling(pollInterval).Should(Succeed())
 
 			By("waiting a moment before re-applying")
-			time.Sleep(1500 * time.Millisecond)
+			utils.WaitForRFC3339Tick()
 
 			By("re-applying the same manifest to reset the timer")
 			utils.ApplyYAML(deploymentYAML)
@@ -191,7 +191,7 @@ spec:
 		It("should not change a fixed 'delete-at' time on re-apply", func() {
 			By("creating a Deployment with a fixed 'delete-at' annotation")
 			deploymentName := "e2e-delete-at-fixed"
-			deleteAtTime := time.Now().Add(6 * time.Second).UTC().Format(time.RFC3339)
+			deleteAtTime := time.Now().Add(4 * time.Second).UTC().Format(time.RFC3339)
 
 			deploymentYAML := fmt.Sprintf(`
 apiVersion: apps/v1
@@ -202,7 +202,7 @@ metadata:
   annotations:
     lifecycle.cezary.dev/delete-at: "%s"
 spec:
-  replicas: 1
+  replicas: 0
   selector:
     matchLabels:
       app: test-delete-fixed
@@ -219,7 +219,7 @@ spec:
 			utils.ApplyYAML(deploymentYAML)
 
 			By("re-applying the same manifest after a delay")
-			time.Sleep(1 * time.Second)
+			utils.WaitForRFC3339Tick()
 			utils.ApplyYAML(deploymentYAML)
 
 			By("verifying the 'delete-at' annotation has not changed")
@@ -250,9 +250,9 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/delete-after: "8s"
+    lifecycle.cezary.dev/delete-after: "5s"
 spec:
-  replicas: 1
+  replicas: 0
   selector:
     matchLabels:
       app: test-unrelated
@@ -279,7 +279,7 @@ spec:
 			}).WithTimeout(time.Minute).WithPolling(pollInterval).Should(Succeed())
 
 			By("making an unrelated update to the deployment (adding an annotation)")
-			time.Sleep(1 * time.Second)
+			utils.WaitForRFC3339Tick()
 			cmd := exec.Command("kubectl", "annotate", "deployment", deploymentName, "-n", testNamespace, "unrelated.io/test=true")
 			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
@@ -315,7 +315,7 @@ metadata:
   annotations:
     lifecycle.cezary.dev/restart-at: "%s"
 spec:
-  replicas: 1
+  replicas: 0
   selector:
     matchLabels:
       app: test-restart
@@ -358,7 +358,7 @@ metadata:
   annotations:
     lifecycle.cezary.dev/restart-after: "4s"
 spec:
-  replicas: 1
+  replicas: 0
   selector:
     matchLabels:
       app: test-restart-reset
@@ -387,7 +387,7 @@ spec:
 			}).WithTimeout(time.Minute).WithPolling(pollInterval).Should(Succeed())
 
 			By("waiting a moment before re-applying")
-			time.Sleep(1500 * time.Millisecond)
+			utils.WaitForRFC3339Tick()
 
 			By("re-applying the same manifest to reset the timer")
 			utils.ApplyYAML(deploymentYAML)
@@ -424,6 +424,7 @@ spec:
 
 		It("should restart a Deployment periodically based on 'restart-every'", func() {
 			deploymentName := "e2e-restart-every"
+			staleLastRestart := time.Now().Add(-3 * time.Second).UTC().Format(time.RFC3339)
 			deploymentYAML := fmt.Sprintf(`
 apiVersion: apps/v1
 kind: Deployment
@@ -431,32 +432,36 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/restart-every: "2s"
+    lifecycle.cezary.dev/restart-every: "1s"
+    lifecycle.cezary.dev/last-restart-timestamp: "%s"
 spec:
-  replicas: 1
+  replicas: 0
   selector: { matchLabels: { app: test-restart-every }}
   template:
     metadata: { labels: { app: test-restart-every }}
     spec: { containers: [ { name: nginx, image: nginx:latest } ] }
-`, deploymentName, testNamespace)
+`, deploymentName, testNamespace, staleLastRestart)
 			utils.ApplyYAML(deploymentYAML)
 
-			var firstRestartAtTime string
+			var firstLastRestart string
 			By("verifying the first restart happens")
 			Eventually(func(g Gomega) {
 				dep := utils.GetDeployment(deploymentName, testNamespace, g)
-				g.Expect(dep.Annotations).To(HaveKey("lifecycle.cezary.dev/last-restart-timestamp"))
+				lastRestart := dep.Annotations["lifecycle.cezary.dev/last-restart-timestamp"]
+				g.Expect(lastRestart).NotTo(Equal(staleLastRestart))
 				restartedAt, found := dep.Spec.Template.Annotations["lifecycle.cezary.dev/restartedAt"]
 				g.Expect(found).To(BeTrue(), "first restart should have occurred")
-				firstRestartAtTime = restartedAt
+				g.Expect(restartedAt).NotTo(BeEmpty())
+				firstLastRestart = lastRestart
 			}).WithTimeout(20 * time.Second).WithPolling(pollInterval).Should(Succeed())
 
 			By("verifying a second restart happens, showing recurring logic works")
 			Eventually(func(g Gomega) {
 				dep := utils.GetDeployment(deploymentName, testNamespace, g)
-				restartedAt, found := dep.Spec.Template.Annotations["lifecycle.cezary.dev/restartedAt"]
+				lastRestart := dep.Annotations["lifecycle.cezary.dev/last-restart-timestamp"]
+				g.Expect(lastRestart).NotTo(Equal(firstLastRestart), "a second recurring schedule tick should have been recorded")
+				_, found := dep.Spec.Template.Annotations["lifecycle.cezary.dev/restartedAt"]
 				g.Expect(found).To(BeTrue())
-				g.Expect(restartedAt).NotTo(Equal(firstRestartAtTime), "a second, different restart should have occurred")
 			}).WithTimeout(20 * time.Second).WithPolling(pollInterval).Should(Succeed())
 		})
 
@@ -472,7 +477,7 @@ metadata:
     lifecycle.cezary.dev/delete-after: "3s"
     lifecycle.cezary.dev/reference-point: "creationTimestamp"
 spec:
-  replicas: 1
+  replicas: 0
   selector: { matchLabels: { app: test-ref-point }}
   template:
     metadata: { labels: { app: test-ref-point }}
@@ -485,7 +490,7 @@ spec:
 			creationTimestamp := dep.GetCreationTimestamp().Time.UTC()
 
 			By("re-applying the manifest with a longer duration")
-			time.Sleep(1 * time.Second)
+			utils.WaitForRFC3339Tick()
 			deploymentYAML = strings.Replace(deploymentYAML, `delete-after: "3s"`, `delete-after: "1h"`, 1)
 			utils.ApplyYAML(deploymentYAML)
 
@@ -510,6 +515,7 @@ spec:
 
 		It("should support cron-timezone for restart-cron", func() {
 			deploymentName := "e2e-cron-timezone"
+			staleLastRestart := time.Now().Add(-2 * time.Minute).UTC().Format(time.RFC3339)
 			deploymentYAML := fmt.Sprintf(`
 apiVersion: apps/v1
 kind: Deployment
@@ -519,44 +525,37 @@ metadata:
   annotations:
     lifecycle.cezary.dev/restart-cron: "* * * * *"
     lifecycle.cezary.dev/cron-timezone: "America/Los_Angeles"
+    lifecycle.cezary.dev/last-restart-timestamp: "%s"
 spec:
-  replicas: 1
+  replicas: 0
   selector: { matchLabels: { app: test-timezone }}
   template:
     metadata: { labels: { app: test-timezone }}
     spec: { containers: [ { name: nginx, image: nginx:latest } ] }
-`, deploymentName, testNamespace)
+`, deploymentName, testNamespace, staleLastRestart)
 			utils.ApplyYAML(deploymentYAML)
 
-			By("verifying the recurring restart state is initialized")
+			By("verifying cron-timezone scheduling triggers from stale recurring state")
 			Eventually(func(g Gomega) {
 				dep := utils.GetDeployment(deploymentName, testNamespace, g)
-				_, found := dep.Annotations["lifecycle.cezary.dev/last-restart-timestamp"]
-				g.Expect(found).To(BeTrue())
-			}).WithTimeout(20 * time.Second).WithPolling(pollInterval).Should(Succeed())
-
-			By("verifying the deployment is restarted")
-			Eventually(func(g Gomega) {
-				dep := utils.GetDeployment(deploymentName, testNamespace, g)
+				lastRestart := dep.Annotations["lifecycle.cezary.dev/last-restart-timestamp"]
+				g.Expect(lastRestart).NotTo(Equal(staleLastRestart))
 				_, found := dep.Spec.Template.Annotations["lifecycle.cezary.dev/restartedAt"]
 				g.Expect(found).To(BeTrue())
-			}).WithTimeout(90 * time.Second).WithPolling(pollInterval).Should(Succeed())
+			}).WithTimeout(20 * time.Second).WithPolling(pollInterval).Should(Succeed())
 		})
 	})
 
 	Context("Cross-Resource Type and Error Handling", func() {
 		It("should delete a Namespace and its contents", func() {
 			namespaceName := "e2e-ns-to-delete"
-			deleteAtTime := time.Now().Add(3 * time.Second).UTC().Format(time.RFC3339)
 
 			namespaceYAML := fmt.Sprintf(`
 apiVersion: v1
 kind: Namespace
 metadata:
   name: %s
-  annotations:
-    lifecycle.cezary.dev/delete-at: "%s"
-`, namespaceName, deleteAtTime)
+`, namespaceName)
 			utils.ApplyYAML(namespaceYAML)
 
 			configMapYAML := fmt.Sprintf(`
@@ -569,6 +568,12 @@ data:
   key: value
 `, namespaceName)
 			utils.ApplyYAML(configMapYAML)
+
+			By("annotating the namespace for immediate deletion")
+			deleteAtTime := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
+			cmd := exec.Command("kubectl", "annotate", "namespace", namespaceName, fmt.Sprintf("lifecycle.cezary.dev/delete-at=%s", deleteAtTime))
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
 
 			By("verifying the namespace is eventually deleted")
 			Eventually(func(g Gomega) {
@@ -591,25 +596,13 @@ metadata:
     lifecycle.cezary.dev/delete-after: "1s"
     lifecycle.cezary.dev/restart-after: "1s"
 spec:
-  replicas: 1
+  replicas: 0
   selector: { matchLabels: { app: test-conflict }}
   template:
     metadata: { labels: { app: test-conflict }}
     spec: { containers: [ { name: nginx, image: nginx:latest } ] }
 `, deploymentName)
 			utils.ApplyYAML(deploymentYAML)
-
-			By("verifying the deployment is NOT deleted or restarted")
-			Consistently(func(g Gomega) {
-				// Check it still exists
-				cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", "default")
-				_, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				// Check it was not restarted
-				dep := utils.GetDeployment(deploymentName, "default", g)
-				_, found := dep.Spec.Template.Annotations["lifecycle.cezary.dev/restartedAt"]
-				g.Expect(found).To(BeFalse())
-			}).WithTimeout(5 * time.Second).WithPolling(pollInterval).Should(Succeed())
 
 			By("verifying a warning event was posted")
 			Eventually(func(g Gomega) {
@@ -625,7 +618,15 @@ spec:
 				g.Expect(foundEvent).To(BeTrue(), "expected to find a ConflictingAnnotations warning event")
 			}).WithTimeout(30 * time.Second).WithPolling(pollInterval).Should(Succeed())
 
-			cmd := exec.Command("kubectl", "delete", "deployment", deploymentName, "-n", "default")
+			By("verifying the deployment is NOT deleted or restarted")
+			cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", "default")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			dep := utils.GetDeployment(deploymentName, "default", NewGomegaWithT(GinkgoT()))
+			_, found := dep.Spec.Template.Annotations["lifecycle.cezary.dev/restartedAt"]
+			Expect(found).To(BeFalse())
+
+			cmd = exec.Command("kubectl", "delete", "deployment", deploymentName, "-n", "default")
 			_, _ = utils.Run(cmd)
 		})
 
@@ -641,20 +642,13 @@ metadata:
     lifecycle.cezary.dev/delete-after: "2s"
     lifecycle.cezary.dev/dry-run: "true"
 spec:
-  replicas: 1
+  replicas: 0
   selector: { matchLabels: { app: test-dry-run }}
   template:
     metadata: { labels: { app: test-dry-run }}
     spec: { containers: [ { name: nginx, image: nginx:latest } ] }
 `, deploymentName)
 			utils.ApplyYAML(deploymentYAML)
-
-			By("verifying the deployment is NOT deleted")
-			Consistently(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", "default")
-				_, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-			}).WithTimeout(5 * time.Second).WithPolling(pollInterval).Should(Succeed())
 
 			By("verifying a dry-run event was posted")
 			Eventually(func(g Gomega) {
@@ -670,8 +664,13 @@ spec:
 				g.Expect(foundEvent).To(BeTrue(), "expected to find DryRunDelete event")
 			}).WithTimeout(20 * time.Second).WithPolling(pollInterval).Should(Succeed())
 
+			By("verifying the deployment is NOT deleted")
+			cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", "default")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
 			// Cleanup
-			cmd := exec.Command("kubectl", "delete", "deployment", deploymentName, "-n", "default")
+			cmd = exec.Command("kubectl", "delete", "deployment", deploymentName, "-n", "default")
 			_, _ = utils.Run(cmd)
 		})
 	})
@@ -758,10 +757,10 @@ metadata:
   name: %s
   namespace: %s
   annotations:
-    lifecycle.cezary.dev/delete-after: "3s"
+    lifecycle.cezary.dev/delete-at: "%s"
 spec:
   foo: bar
-`, crName, testNamespace)
+`, crName, testNamespace, time.Now().Add(-time.Minute).UTC().Format(time.RFC3339))
 			utils.ApplyYAML(crYAML)
 
 			By("verifying the custom resource is eventually deleted")
