@@ -16,13 +16,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -126,6 +122,8 @@ type LifecycleReconciler struct {
 	Recorder     record.EventRecorder
 	Config       ScopeConfig
 	GlobalDryRun bool
+	discovery    preferredResourceDiscovery
+	coverage     *coverageState
 }
 
 // +kubebuilder:rbac:groups=*,resources=*,verbs=get;list;watch;delete;update;patch
@@ -605,88 +603,4 @@ func (r *LifecycleReconciler) triggerRestart(ctx context.Context, obj *unstructu
 	logger.Info("Successfully patched object to trigger restart")
 	r.Recorder.Event(obj, "Normal", "RestartTriggered", "Triggered a rolling restart of the resource.")
 	return nil
-}
-
-func (r *LifecycleReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	r.Recorder = mgr.GetEventRecorderFor("lifecycle-controller")
-
-	config := mgr.GetConfig()
-	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
-	if err != nil {
-		return fmt.Errorf("failed to create discovery client: %w", err)
-	}
-
-	// Get the list of all server-preferred API resources
-	apiResourceLists, err := discoveryClient.ServerPreferredResources()
-	if err != nil {
-		log.Log.Error(err, "failed to get all server preferred resources, continuing with available ones")
-	}
-
-	controllerLogger := mgr.GetLogger().WithValues("controller", "lifecycle")
-	controllerBuilder := builder.TypedControllerManagedBy[resourceRequest](mgr).
-		Named("lifecycle").
-		WithLogConstructor(func(req *resourceRequest) logr.Logger {
-			if req == nil {
-				return controllerLogger
-			}
-			return controllerLogger.WithValues(
-				"namespace", req.Namespace,
-				"name", req.Name,
-				"gvk", req.GVK.String(),
-			)
-		})
-	lifecyclePredicate := LifecyclePredicate()
-	// Pass a closure to allow dynamic config updates during tests
-	namespacePredicate := NamespaceScopePredicate(func() ScopeConfig {
-		return r.Config
-	})
-	setupLog := mgr.GetLogger().WithName("lifecycle-setup")
-
-	// Dynamically watch all resources that support the necessary verbs
-	for _, apiResourceList := range apiResourceLists {
-		gv, err := schema.ParseGroupVersion(apiResourceList.GroupVersion)
-		if err != nil {
-			setupLog.Error(err, "failed to parse group version", "groupVersion", apiResourceList.GroupVersion)
-			continue
-		}
-
-		for _, resource := range apiResourceList.APIResources {
-			// Filter out subresources (like /status, /scale)
-			if strings.Contains(resource.Name, "/") {
-				continue
-			}
-
-			// Filter resources that don't support the verbs we need
-			verbs := sets.NewString(resource.Verbs...)
-			if !verbs.HasAll("get", "list", "watch", "patch", "delete") {
-				continue
-			}
-
-			// Filter based on config
-			if !r.Config.IsResourceAllowed(resource.Name, gv.Group) {
-				setupLog.V(1).Info("Skipping resource due to configuration", "resource", resource.Name, "group", gv.Group)
-				continue
-			}
-
-			gvk := schema.GroupVersionKind{
-				Group:   gv.Group,
-				Version: gv.Version,
-				Kind:    resource.Kind,
-			}
-
-			u := &unstructured.Unstructured{}
-			u.SetGroupVersionKind(gvk)
-
-			setupLog.Info("Setting up watch for resource", "gvk", u.GroupVersionKind().String())
-			controllerBuilder = controllerBuilder.Watches(
-				u,
-				handler.TypedEnqueueRequestsFromMapFunc(func(_ context.Context, obj client.Object) []resourceRequest {
-					return []resourceRequest{{NamespacedName: client.ObjectKeyFromObject(obj), GVK: gvk}}
-				}),
-				builder.WithPredicates(lifecyclePredicate, namespacePredicate),
-			)
-		}
-	}
-
-	return controllerBuilder.Complete(r)
 }

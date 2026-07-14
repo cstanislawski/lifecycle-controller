@@ -145,6 +145,14 @@ The controller supports glob-style patterns for filtering resources and namespac
   - Strict Scoping: If provided, the controller will **only** watch resources inside matching namespaces. It will **automatically exclude** cluster-scoped resources (like `Nodes`) with the exception of `Namespace` objects themselves, provided their name matches the pattern.
 - `--ignore-namespace` - (Repeatable) Glob pattern for namespaces to strictly ignore. Takes precedence over watch rules.
 
+### Discovery and Readiness
+
+With explicit `--watch-resource` patterns, startup fails if discovery is incomplete, a non-ignored pattern matches no resource, or a matched resource lacks the required `get`, `list`, `watch`, `patch`, and `delete` verbs. This prevents an explicit allowlist from silently becoming a smaller watch set.
+
+Without an explicit resource allowlist, incomplete discovery keeps the active controller unready and no partial watch set is started. Discovery retries every 30 seconds; readiness succeeds only after a complete result and synchronization of every configured watch cache. Replicas waiting for leader election remain ready because they are passive until elected.
+
+The `lifecycle_controller_discovery_ready` metric reports active discovery/cache readiness. `lifecycle_controller_discovery_resources` reports bounded counts by `result` and `reason`; logs include the exact discovered, skipped, or failed resource/group.
+
 ### Examples
 
 Watch only deployments in `dev-*` namespaces:

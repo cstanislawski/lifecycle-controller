@@ -205,13 +205,14 @@ func main() {
 	)
 	setupLog.Info("Global dry-run mode", "enabled", globalDryRun)
 
-	if err := (&controller.LifecycleReconciler{
+	reconciler := &controller.LifecycleReconciler{
 		Client:       mgr.GetClient(),
 		Scheme:       mgr.GetScheme(),
 		Config:       scopeConfig,
 		GlobalDryRun: globalDryRun,
 		Recorder:     mgr.GetEventRecorderFor("lifecycle-controller"),
-	}).SetupWithManager(mgr); err != nil {
+	}
+	if err := reconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Lifecycle")
 		os.Exit(1)
 	}
@@ -221,7 +222,8 @@ func main() {
 		setupLog.Error(err, "unable to set up health check")
 		os.Exit(1)
 	}
-	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+	readinessCheck := reconciler.ReadinessCheck(mgr.Elected(), enableLeaderElection)
+	if err := mgr.AddReadyzCheck("resource-coverage", readinessCheck); err != nil {
 		setupLog.Error(err, "unable to set up ready check")
 		os.Exit(1)
 	}
