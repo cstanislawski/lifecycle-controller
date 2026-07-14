@@ -131,6 +131,19 @@ func markManagedBy(obj client.Object) {
 	obj.SetAnnotations(annotations)
 }
 
+func (r *LifecycleReconciler) dryRunEnabled(obj client.Object) (bool, error) {
+	dryRunValue, found := obj.GetAnnotations()[DryRunAnnotation]
+	if !found {
+		return r.GlobalDryRun, nil
+	}
+
+	resourceDryRun, err := strconv.ParseBool(dryRunValue)
+	if err != nil {
+		return false, fmt.Errorf("invalid value %q for %s: expected a boolean", dryRunValue, DryRunAnnotation)
+	}
+	return r.GlobalDryRun || resourceDryRun, nil
+}
+
 func (r *LifecycleReconciler) Reconcile(ctx context.Context, req resourceRequest) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
@@ -166,7 +179,12 @@ func (r *LifecycleReconciler) reconcileLogic(ctx context.Context, obj client.Obj
 		u = &unstructured.Unstructured{Object: unstructuredObj}
 	}
 
-	isDryRun := r.GlobalDryRun || annotations[DryRunAnnotation] == "true"
+	isDryRun, err := r.dryRunEnabled(obj)
+	if err != nil {
+		logger.Error(err, "invalid dry-run annotation; taking no action")
+		r.Recorder.Eventf(obj, "Warning", "InvalidAnnotationValue", "%v; taking no action", err)
+		return ctrl.Result{}, nil
+	}
 	hasRestartCron := annotations[RestartCronAnnotation] != ""
 	if annotations[CronTimezoneAnnotation] != "" && !hasRestartCron {
 		r.Recorder.Eventf(obj, "Warning", "IgnoredAnnotation", "Ignoring %s because %s is not set.", CronTimezoneAnnotation, RestartCronAnnotation)
@@ -197,6 +215,10 @@ func (r *LifecycleReconciler) handleDeletion(ctx context.Context, obj *unstructu
 	if deleteAfterStr := annotations[DeleteAfterAnnotation]; deleteAfterStr != "" {
 		if annotations[ReferencePointAnnotation] == ReferencePointCreationTimestamp && annotations[DeleteAtAnnotation] != "" {
 			logger.Info("Ignoring delete-after because delete-at is already set with creationTimestamp reference point")
+			if isDryRun {
+				logger.Info("[DRY-RUN] Would remove redundant delete-after annotation")
+				return ctrl.Result{}, nil
+			}
 			delete(annotations, DeleteAfterAnnotation)
 			obj.SetAnnotations(annotations)
 			markManagedBy(obj)
@@ -215,6 +237,12 @@ func (r *LifecycleReconciler) handleDeletion(ctx context.Context, obj *unstructu
 		}
 		referenceTime := r.getReferenceTime(obj, logger)
 		deletionTime := referenceTime.Add(duration)
+
+		if isDryRun {
+			logger.Info("[DRY-RUN] Would convert delete-after to delete-at without modifying the resource", "deleteAfter", deleteAfterStr, "calculatedDeleteAt", deletionTime.UTC().Format(time.RFC3339))
+			r.Recorder.Eventf(obj, "Normal", "DryRunDelete", "Dry-run: Resource would be scheduled for deletion at %s.", deletionTime.UTC().Format(time.RFC3339))
+			return ctrl.Result{}, nil
+		}
 
 		logger.Info("Converting delete-after to delete-at", "deleteAfter", deleteAfterStr, "calculatedDeleteAt", deletionTime.UTC().Format(time.RFC3339))
 		newAnnotations := obj.GetAnnotations()
@@ -282,6 +310,10 @@ func (r *LifecycleReconciler) handleRestart(ctx context.Context, obj *unstructur
 	if restartAfterStr := annotations[RestartAfterAnnotation]; restartAfterStr != "" {
 		if annotations[ReferencePointAnnotation] == ReferencePointCreationTimestamp && annotations[RestartAtAnnotation] != "" {
 			logger.Info("Ignoring restart-after because restart-at is already set with creationTimestamp reference point")
+			if isDryRun {
+				logger.Info("[DRY-RUN] Would remove redundant restart-after annotation")
+				return ctrl.Result{}, nil
+			}
 			delete(annotations, RestartAfterAnnotation)
 			obj.SetAnnotations(annotations)
 			markManagedBy(obj)
@@ -300,6 +332,12 @@ func (r *LifecycleReconciler) handleRestart(ctx context.Context, obj *unstructur
 		}
 		referenceTime := r.getReferenceTime(obj, logger)
 		restartTime := referenceTime.Add(duration)
+
+		if isDryRun {
+			logger.Info("[DRY-RUN] Would convert restart-after to restart-at without modifying the resource", "restartAfter", restartAfterStr, "calculatedRestartAt", restartTime.UTC().Format(time.RFC3339))
+			r.Recorder.Eventf(obj, "Normal", "DryRunRestart", "Dry-run: Resource would be scheduled for restart at %s.", restartTime.UTC().Format(time.RFC3339))
+			return ctrl.Result{}, nil
+		}
 
 		logger.Info("Converting restart-after to restart-at", "restartAfter", restartAfterStr, "calculatedRestartAt", restartTime.UTC().Format(time.RFC3339))
 		newAnnotations := obj.GetAnnotations()
@@ -380,14 +418,16 @@ func (r *LifecycleReconciler) reconcileRecurringRestart(ctx context.Context, obj
 
 	if lastRestartStr == "" {
 		logger.Info("Initializing schedule by setting last-restart-timestamp", "type", scheduleType)
-		if !isDryRun {
-			annotations[LastRestartTimestamp] = now.UTC().Format(time.RFC3339)
-			obj.SetAnnotations(annotations)
-			markManagedBy(obj)
-			if err := r.Update(ctx, obj); err != nil {
-				logger.Error(err, "failed to initialize last-restart-timestamp")
-				return ctrl.Result{}, err
-			}
+		if isDryRun {
+			logger.Info("[DRY-RUN] Would initialize recurring restart state without modifying the resource", "type", scheduleType, "annotation", LastRestartTimestamp, "value", now.UTC().Format(time.RFC3339))
+			return ctrl.Result{}, nil
+		}
+		annotations[LastRestartTimestamp] = now.UTC().Format(time.RFC3339)
+		obj.SetAnnotations(annotations)
+		markManagedBy(obj)
+		if err := r.Update(ctx, obj); err != nil {
+			logger.Error(err, "failed to initialize last-restart-timestamp")
+			return ctrl.Result{}, err
 		}
 		return ctrl.Result{Requeue: true}, nil
 	}
@@ -412,6 +452,9 @@ func (r *LifecycleReconciler) reconcileRecurringRestart(ctx context.Context, obj
 			annotations[LastRestartTimestamp] = nextScheduledRestart.Format(time.RFC3339)
 		}, logger); err != nil {
 			return ctrl.Result{}, err
+		}
+		if isDryRun {
+			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{Requeue: true}, nil
 	} else {
