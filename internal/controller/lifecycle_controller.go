@@ -327,17 +327,10 @@ func (r *LifecycleReconciler) handleRestart(ctx context.Context, obj *unstructur
 		}
 		if now.After(restartTime) {
 			logger.Info("Triggering one-time restart based on restart-at annotation", "restartTime", restartTime)
-			if err := r.triggerRestart(ctx, obj, isDryRun, logger); err != nil {
-				return ctrl.Result{}, err
-			}
-			if !isDryRun {
+			if err := r.triggerRestart(ctx, obj, isDryRun, func(annotations map[string]string) {
 				delete(annotations, RestartAtAnnotation)
-				obj.SetAnnotations(annotations)
-				markManagedBy(obj)
-				if err := r.Update(ctx, obj); err != nil {
-					logger.Error(err, "failed to remove restart-at annotation")
-					return ctrl.Result{}, err
-				}
+			}, logger); err != nil {
+				return ctrl.Result{}, err
 			}
 			return ctrl.Result{}, nil
 		} else {
@@ -416,17 +409,10 @@ func (r *LifecycleReconciler) reconcileRecurringRestart(ctx context.Context, obj
 
 	if now.After(nextScheduledRestart) {
 		logger.Info("Triggering recurring restart", "type", scheduleType, "scheduledAt", nextScheduledRestart)
-		if err := r.triggerRestart(ctx, obj, isDryRun, logger); err != nil {
-			return ctrl.Result{}, err
-		}
-		if !isDryRun {
+		if err := r.triggerRestart(ctx, obj, isDryRun, func(annotations map[string]string) {
 			annotations[LastRestartTimestamp] = nextScheduledRestart.Format(time.RFC3339)
-			obj.SetAnnotations(annotations)
-			markManagedBy(obj)
-			if err := r.Update(ctx, obj); err != nil {
-				logger.Error(err, "failed to update last-restart-timestamp after restart")
-				return ctrl.Result{}, err
-			}
+		}, logger); err != nil {
+			return ctrl.Result{}, err
 		}
 		return ctrl.Result{Requeue: true}, nil
 	} else {
@@ -436,8 +422,8 @@ func (r *LifecycleReconciler) reconcileRecurringRestart(ctx context.Context, obj
 	}
 }
 
-// triggerRestart injects the annotation into the pod template to cause a rollout.
-func (r *LifecycleReconciler) triggerRestart(ctx context.Context, obj *unstructured.Unstructured, isDryRun bool, logger logr.Logger) error {
+// triggerRestart applies the rollout marker and its acknowledgement in one patch.
+func (r *LifecycleReconciler) triggerRestart(ctx context.Context, obj *unstructured.Unstructured, isDryRun bool, acknowledge func(map[string]string), logger logr.Logger) error {
 	restartedAtTime := time.Now().UTC().Format(time.RFC3339)
 	logger.Info("Attempting to trigger restart", "restartedAt", restartedAtTime)
 
@@ -446,6 +432,15 @@ func (r *LifecycleReconciler) triggerRestart(ctx context.Context, obj *unstructu
 		r.Recorder.Event(obj, "Normal", "DryRunRestart", "Dry-run: Resource would be restarted now.")
 		return nil
 	}
+
+	base := obj.DeepCopy()
+	annotations := obj.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	acknowledge(annotations)
+	obj.SetAnnotations(annotations)
+	markManagedBy(obj)
 
 	templateAnnotations, found, err := unstructured.NestedStringMap(obj.Object, "spec", "template", "metadata", "annotations")
 	if err != nil {
@@ -465,15 +460,15 @@ func (r *LifecycleReconciler) triggerRestart(ctx context.Context, obj *unstructu
 		r.Recorder.Eventf(obj, "Warning", "RestartFailed", "Could not set pod template annotations: %v", err)
 		return err
 	}
-	markManagedBy(obj)
 
-	if err := r.Update(ctx, obj); err != nil {
-		logger.Error(err, "failed to update object to trigger restart")
-		r.Recorder.Eventf(obj, "Warning", "RestartFailed", "Could not update object to trigger restart: %v", err)
+	patch := client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})
+	if err := r.Patch(ctx, obj, patch); err != nil {
+		logger.Error(err, "failed to patch object to trigger restart")
+		r.Recorder.Eventf(obj, "Warning", "RestartFailed", "Could not patch object to trigger restart: %v", err)
 		return err
 	}
 
-	logger.Info("Successfully updated object to trigger restart")
+	logger.Info("Successfully patched object to trigger restart")
 	r.Recorder.Event(obj, "Normal", "RestartTriggered", "Triggered a rolling restart of the resource.")
 	return nil
 }

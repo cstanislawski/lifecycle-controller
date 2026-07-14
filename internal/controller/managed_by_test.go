@@ -148,19 +148,24 @@ func TestManagedByAddedToTopLevelAndTemplateForRestartTrigger(t *testing.T) {
 	obj := testDeployment(key.Name, map[string]string{
 		RestartAtAnnotation: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339),
 	})
+	obj.SetResourceVersion("1")
 	setTemplate(t, obj)
 	r := &LifecycleReconciler{
 		Client:   fake.NewClientBuilder().WithObjects(obj.DeepCopy()).Build(),
 		Recorder: record.NewFakeRecorder(8),
 	}
 
-	if err := r.triggerRestart(ctx, obj, false, logr.Discard()); err != nil {
-		t.Fatalf("trigger restart: %v", err)
+	if _, err := r.handleRestart(ctx, obj, false, logr.Discard()); err != nil {
+		t.Fatalf("handle restart: %v", err)
 	}
 
 	fetched := getObject(t, r, key)
-	if got := fetched.GetAnnotations()[ManagedByAnnotation]; got != ManagedByValue {
+	annotations := fetched.GetAnnotations()
+	if got := annotations[ManagedByAnnotation]; got != ManagedByValue {
 		t.Fatalf("managed-by = %q, want %q", got, ManagedByValue)
+	}
+	if _, found := annotations[RestartAtAnnotation]; found {
+		t.Fatalf("restart-at still present")
 	}
 
 	templateAnnotations, found, err := unstructured.NestedStringMap(fetched.Object, "spec", "template", "metadata", "annotations")
