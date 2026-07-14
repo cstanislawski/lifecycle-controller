@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/tools/record"
@@ -23,7 +24,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 // Constants for annotations
@@ -44,20 +44,18 @@ const (
 	ReferencePointCreationTimestamp = "creationTimestamp"
 )
 
-// ResourceScope holds the GVK and scope information for a discovered resource.
-type ResourceScope struct {
-	GVK          schema.GroupVersionKind
-	IsNamespaced bool
+type resourceRequest struct {
+	types.NamespacedName
+	GVK schema.GroupVersionKind
 }
 
 // LifecycleReconciler reconciles objects with lifecycle annotations.
 type LifecycleReconciler struct {
 	client.Client
-	Scheme         *runtime.Scheme
-	Recorder       record.EventRecorder
-	KnownResources []ResourceScope
-	Config         ScopeConfig
-	GlobalDryRun   bool
+	Scheme       *runtime.Scheme
+	Recorder     record.EventRecorder
+	Config       ScopeConfig
+	GlobalDryRun bool
 }
 
 // +kubebuilder:rbac:groups=*,resources=*,verbs=get;list;watch;delete;update;patch
@@ -134,40 +132,21 @@ func markManagedBy(obj client.Object) {
 	obj.SetAnnotations(annotations)
 }
 
-func (r *LifecycleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *LifecycleReconciler) Reconcile(ctx context.Context, req resourceRequest) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	var foundObject client.Object
-	keyIsNamespaced := req.Namespace != ""
-
-	for _, res := range r.KnownResources {
-		// Skip resources where the scope does not match the request key's scope.
-		// This prevents trying to fetch a namespaced resource with a cluster-scoped key, and vice-versa.
-		if res.IsNamespaced != keyIsNamespaced {
-			continue
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(req.GVK)
+	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
+		if apierrors.IsNotFound(err) {
+			logger.Info("object not found, likely deleted", "gvk", req.GVK)
+			return ctrl.Result{}, nil
 		}
-
-		obj := &unstructured.Unstructured{}
-		obj.SetGroupVersionKind(res.GVK)
-		err := r.Get(ctx, req.NamespacedName, obj)
-
-		if err == nil {
-			foundObject = obj
-			break
-		}
-
-		if !apierrors.IsNotFound(err) {
-			logger.Error(err, "failed to get object", "gvk", res.GVK)
-			return ctrl.Result{}, err
-		}
+		logger.Error(err, "failed to get object", "gvk", req.GVK)
+		return ctrl.Result{}, err
 	}
 
-	if foundObject == nil {
-		logger.Info("object not found in any of the watched GVKs, likely deleted")
-		return ctrl.Result{}, nil
-	}
-
-	return r.reconcileLogic(ctx, foundObject, logger)
+	return r.reconcileLogic(ctx, obj, logger)
 }
 
 func (r *LifecycleReconciler) reconcileLogic(ctx context.Context, obj client.Object, logger logr.Logger) (ctrl.Result, error) {
@@ -514,7 +493,19 @@ func (r *LifecycleReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		log.Log.Error(err, "failed to get all server preferred resources, continuing with available ones")
 	}
 
-	controllerBuilder := ctrl.NewControllerManagedBy(mgr).Named("lifecycle")
+	controllerLogger := mgr.GetLogger().WithValues("controller", "lifecycle")
+	controllerBuilder := builder.TypedControllerManagedBy[resourceRequest](mgr).
+		Named("lifecycle").
+		WithLogConstructor(func(req *resourceRequest) logr.Logger {
+			if req == nil {
+				return controllerLogger
+			}
+			return controllerLogger.WithValues(
+				"namespace", req.Namespace,
+				"name", req.Name,
+				"gvk", req.GVK.String(),
+			)
+		})
 	annotationPredicate := predicate.AnnotationChangedPredicate{}
 	// Pass a closure to allow dynamic config updates during tests
 	namespacePredicate := NamespaceScopePredicate(func() ScopeConfig {
@@ -548,24 +539,20 @@ func (r *LifecycleReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				continue
 			}
 
-			// Add the GVK and its scope to our list for the Reconcile function
-			r.KnownResources = append(r.KnownResources, ResourceScope{
-				GVK: schema.GroupVersionKind{
-					Group:   gv.Group,
-					Version: gv.Version,
-					Kind:    resource.Kind,
-				},
-				IsNamespaced: resource.Namespaced,
-			})
+			gvk := schema.GroupVersionKind{
+				Group:   gv.Group,
+				Version: gv.Version,
+				Kind:    resource.Kind,
+			}
 
 			u := &unstructured.Unstructured{}
-			u.SetGroupVersionKind(r.KnownResources[len(r.KnownResources)-1].GVK)
+			u.SetGroupVersionKind(gvk)
 
 			setupLog.Info("Setting up watch for resource", "gvk", u.GroupVersionKind().String())
 			controllerBuilder = controllerBuilder.Watches(
 				u,
-				handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, a client.Object) []reconcile.Request {
-					return []reconcile.Request{{NamespacedName: client.ObjectKeyFromObject(a)}}
+				handler.TypedEnqueueRequestsFromMapFunc(func(_ context.Context, obj client.Object) []resourceRequest {
+					return []resourceRequest{{NamespacedName: client.ObjectKeyFromObject(obj), GVK: gvk}}
 				}),
 				builder.WithPredicates(annotationPredicate, namespacePredicate),
 			)
