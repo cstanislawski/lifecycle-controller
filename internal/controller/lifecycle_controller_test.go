@@ -313,14 +313,18 @@ var _ = Describe("Lifecycle Controller", func() {
 			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
 		})
 
-		It("should trigger a recurring restart with 'restart-every'", func() {
-			By("Creating a deployment with restart-every: 1s")
+		It("should coalesce missed restart-every occurrences into one restart", func() {
+			By("Creating a deployment with one day of missed one-minute intervals")
 			ctx := context.Background()
 			key := types.NamespacedName{Name: "restart-every-test", Namespace: TestNamespace}
+			lastRestart := time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339)
 			deployment := &appsv1.Deployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: key.Name, Namespace: key.Namespace,
-					Annotations: map[string]string{RestartEveryAnnotation: "1s"},
+					Annotations: map[string]string{
+						RestartEveryAnnotation: "1m",
+						LastRestartTimestamp:   lastRestart,
+					},
 				},
 				Spec: appsv1.DeploymentSpec{
 					Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "test"}},
@@ -332,38 +336,26 @@ var _ = Describe("Lifecycle Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
 
-			By("Waiting for the controller to record recurring restart state")
-			var previousLastRestart string
+			By("Waiting for one coalesced restart")
+			var restartedAt string
 			Eventually(func(g Gomega) {
 				fetched := &appsv1.Deployment{}
 				g.Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
 				g.Expect(fetched.Annotations).To(HaveKey(LastRestartTimestamp))
+				g.Expect(fetched.Annotations[LastRestartTimestamp]).NotTo(Equal(lastRestart))
 				g.Expect(fetched.Annotations).To(HaveKeyWithValue(ManagedByAnnotation, ManagedByValue))
-				previousLastRestart = fetched.Annotations[LastRestartTimestamp]
-			}, Timeout, Interval).Should(Succeed())
-
-			By("Waiting for the next recurring restart to be triggered")
-			var firstRestartTime string
-			Eventually(func(g Gomega) {
-				fetched := &appsv1.Deployment{}
-				g.Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
-				g.Expect(fetched.Annotations).To(HaveKey(LastRestartTimestamp))
-				g.Expect(fetched.Annotations[LastRestartTimestamp]).NotTo(Equal(previousLastRestart))
 				g.Expect(fetched.Spec.Template.Annotations).To(HaveKey(RestartedAtTemplate))
 				g.Expect(fetched.Spec.Template.Annotations).To(HaveKeyWithValue(ManagedByAnnotation, ManagedByValue))
-				firstRestartTime = fetched.Spec.Template.Annotations[RestartedAtTemplate]
-				previousLastRestart = fetched.Annotations[LastRestartTimestamp]
+				restartedAt = fetched.Spec.Template.Annotations[RestartedAtTemplate]
 			}, Timeout, Interval).Should(Succeed())
 
-			By("Waiting for a second restart to confirm recurrence")
-			Eventually(func(g Gomega) {
+			By("Confirming missed intervals do not cause catch-up rollouts")
+			Consistently(func(g Gomega) {
 				fetched := &appsv1.Deployment{}
 				g.Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
-				g.Expect(fetched.Annotations).To(HaveKey(LastRestartTimestamp))
-				g.Expect(fetched.Annotations[LastRestartTimestamp]).NotTo(Equal(previousLastRestart))
 				g.Expect(fetched.Spec.Template.Annotations).To(HaveKey(RestartedAtTemplate))
-				g.Expect(fetched.Spec.Template.Annotations[RestartedAtTemplate]).NotTo(Equal(firstRestartTime))
-			}, Timeout, Interval).Should(Succeed())
+				g.Expect(fetched.Spec.Template.Annotations[RestartedAtTemplate]).To(Equal(restartedAt))
+			}, 3*time.Second, Interval).Should(Succeed())
 
 			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
 		})

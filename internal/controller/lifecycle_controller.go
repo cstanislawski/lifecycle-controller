@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -41,11 +42,81 @@ const (
 	ManagedByAnnotation             = "lifecycle.cezary.dev/managed-by"
 	ManagedByValue                  = "lifecycle-controller"
 	ReferencePointCreationTimestamp = "creationTimestamp"
+	minimumRestartEveryInterval     = time.Minute
 )
 
 type resourceRequest struct {
 	types.NamespacedName
 	GVK schema.GroupVersionKind
+}
+
+// recurringSchedule describes the two decisions needed by recurring restart
+// reconciliation: the next occurrence and the anchor to persist after missed
+// occurrences are coalesced.
+type recurringSchedule interface {
+	Next(time.Time) time.Time
+	coalescedAnchor(lastRestart, now time.Time) time.Time
+}
+
+type intervalRecurringSchedule struct {
+	duration time.Duration
+}
+
+func (s intervalRecurringSchedule) Next(anchor time.Time) time.Time {
+	return anchor.Add(s.duration)
+}
+
+func (s intervalRecurringSchedule) coalescedAnchor(lastRestart, now time.Time) time.Time {
+	return now.Add(-elapsedModulo(lastRestart, now, s.duration))
+}
+
+func elapsedModulo(start, end time.Time, interval time.Duration) time.Duration {
+	// time.Time.Sub saturates at the largest duration, so retain only each
+	// chunk's modulo while advancing across anchors farther than ~292 years.
+	var remainder time.Duration
+	for cursor := start; cursor.Before(end); {
+		chunk := end.Sub(cursor)
+		next := end
+		if chunk == time.Duration(math.MaxInt64) {
+			next = cursor.Add(chunk)
+		}
+
+		chunk %= interval
+		if remainder >= interval-chunk {
+			remainder -= interval - chunk
+		} else {
+			remainder += chunk
+		}
+		cursor = next
+	}
+	return remainder
+}
+
+type cronRecurringSchedule struct {
+	cron.Schedule
+}
+
+func (cronRecurringSchedule) coalescedAnchor(_ time.Time, now time.Time) time.Time {
+	return now
+}
+
+func planRecurringRestart(schedule recurringSchedule, lastRestart, now time.Time) (scheduledAt, coalescedAnchor time.Time, due bool) {
+	scheduledAt = schedule.Next(lastRestart)
+	if now.Before(scheduledAt) {
+		return scheduledAt, lastRestart, false
+	}
+	return scheduledAt, schedule.coalescedAnchor(lastRestart, now), true
+}
+
+func requeueForNextOccurrence(next time.Time) ctrl.Result {
+	if next.IsZero() {
+		return ctrl.Result{}
+	}
+	requeueAfter := time.Until(next)
+	if requeueAfter <= 0 {
+		requeueAfter = time.Nanosecond
+	}
+	return ctrl.Result{RequeueAfter: requeueAfter}
 }
 
 // LifecycleReconciler reconciles objects with lifecycle annotations.
@@ -66,36 +137,55 @@ func parseExtendedDuration(durationStr string) (time.Duration, error) {
 	re := regexp.MustCompile(`(\d+)\s*d`)
 	matches := re.FindAllStringSubmatch(durationStr, -1)
 
-	totalHours := 0
+	var dayDuration time.Duration
 	// Replace day components with hour components
 	processedStr := durationStr
 	for _, match := range matches {
 		if len(match) == 2 {
-			days, err := strconv.Atoi(match[1])
+			days, err := strconv.ParseInt(match[1], 10, 64)
 			if err != nil {
 				return 0, fmt.Errorf("invalid number of days: %s", match[1])
 			}
-			totalHours += days * 24
+			if days > (math.MaxInt64-int64(dayDuration))/int64(24*time.Hour) {
+				return 0, fmt.Errorf("number of days is too large: %s", match[1])
+			}
+			dayDuration += time.Duration(days) * 24 * time.Hour
 			processedStr = strings.Replace(processedStr, match[0], "", 1)
 		}
-	}
-
-	// Add the calculated hours to the string if any were found
-	if totalHours > 0 {
-		processedStr = fmt.Sprintf("%dh%s", totalHours, processedStr)
 	}
 
 	// Remove spaces to avoid parsing issues with the remaining string
 	processedStr = strings.ReplaceAll(processedStr, " ", "")
 
 	if processedStr == "" {
-		if totalHours > 0 {
-			return time.Duration(totalHours) * time.Hour, nil
+		if dayDuration > 0 {
+			return dayDuration, nil
 		}
 		return 0, fmt.Errorf("duration string '%s' is empty or invalid", durationStr)
 	}
 
-	return time.ParseDuration(processedStr)
+	remainder, err := time.ParseDuration(processedStr)
+	if err != nil {
+		return 0, err
+	}
+	if remainder > 0 && dayDuration > time.Duration(math.MaxInt64)-remainder {
+		return 0, fmt.Errorf("duration is too large: %s", durationStr)
+	}
+	return dayDuration + remainder, nil
+}
+
+func parseRestartEvery(durationStr string) (time.Duration, error) {
+	if strings.HasPrefix(strings.TrimSpace(durationStr), "-") {
+		return 0, fmt.Errorf("duration must be positive")
+	}
+	duration, err := parseExtendedDuration(durationStr)
+	if err != nil {
+		return 0, err
+	}
+	if duration < minimumRestartEveryInterval {
+		return 0, fmt.Errorf("duration must be at least %s", minimumRestartEveryInterval)
+	}
+	return duration, nil
 }
 
 // getReferenceTime determines the starting point for a relative timer based on annotations.
@@ -388,30 +478,37 @@ func (r *LifecycleReconciler) handleRestart(ctx context.Context, obj *unstructur
 			return ctrl.Result{}, nil
 		}
 
-		schedule, err := cron.ParseStandard(fmt.Sprintf("CRON_TZ=%s %s", cronTimezone, cronStr))
+		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+		schedule, err := parser.Parse(fmt.Sprintf("CRON_TZ=%s %s", cronTimezone, cronStr))
 		if err != nil {
 			logger.Error(err, "invalid cron expression", "cron", cronStr)
 			r.Recorder.Eventf(obj, "Warning", "InvalidAnnotation", "Invalid cron expression for restart-cron: %v", err)
 			return ctrl.Result{}, nil
 		}
-		return r.reconcileRecurringRestart(ctx, obj, isDryRun, "cron", schedule, logger)
+		if schedule.Next(time.Now()).IsZero() {
+			err := fmt.Errorf("cron expression has no future occurrence")
+			logger.Error(err, "invalid cron expression", "cron", cronStr)
+			r.Recorder.Eventf(obj, "Warning", "InvalidAnnotation", "Invalid cron expression for restart-cron: %v", err)
+			return ctrl.Result{}, nil
+		}
+		return r.reconcileRecurringRestart(ctx, obj, isDryRun, "cron", cronRecurringSchedule{Schedule: schedule}, logger)
 	}
 
 	if everyStr := annotations[RestartEveryAnnotation]; everyStr != "" {
-		duration, err := parseExtendedDuration(everyStr)
+		duration, err := parseRestartEvery(everyStr)
 		if err != nil {
 			logger.Error(err, "invalid duration for restart-every", "duration", everyStr)
 			r.Recorder.Eventf(obj, "Warning", "InvalidAnnotation", "Invalid duration for restart-every: %v", err)
 			return ctrl.Result{}, nil
 		}
-		return r.reconcileRecurringRestart(ctx, obj, isDryRun, "interval", duration, logger)
+		return r.reconcileRecurringRestart(ctx, obj, isDryRun, "interval", intervalRecurringSchedule{duration: duration}, logger)
 	}
 
 	return ctrl.Result{}, nil
 }
 
 // reconcileRecurringRestart handles the stateful logic for both cron and interval restarts.
-func (r *LifecycleReconciler) reconcileRecurringRestart(ctx context.Context, obj *unstructured.Unstructured, isDryRun bool, scheduleType string, schedule interface{}, logger logr.Logger) (ctrl.Result, error) {
+func (r *LifecycleReconciler) reconcileRecurringRestart(ctx context.Context, obj *unstructured.Unstructured, isDryRun bool, scheduleType string, schedule recurringSchedule, logger logr.Logger) (ctrl.Result, error) {
 	annotations := obj.GetAnnotations()
 	now := time.Now()
 	lastRestartStr := annotations[LastRestartTimestamp]
@@ -422,14 +519,14 @@ func (r *LifecycleReconciler) reconcileRecurringRestart(ctx context.Context, obj
 			logger.Info("[DRY-RUN] Would initialize recurring restart state without modifying the resource", "type", scheduleType, "annotation", LastRestartTimestamp, "value", now.UTC().Format(time.RFC3339))
 			return ctrl.Result{}, nil
 		}
-		annotations[LastRestartTimestamp] = now.UTC().Format(time.RFC3339)
+		annotations[LastRestartTimestamp] = now.UTC().Format(time.RFC3339Nano)
 		obj.SetAnnotations(annotations)
 		markManagedBy(obj)
 		if err := r.Update(ctx, obj); err != nil {
 			logger.Error(err, "failed to initialize last-restart-timestamp")
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{Requeue: true}, nil
+		return requeueForNextOccurrence(schedule.Next(now)), nil
 	}
 
 	lastRestartTime, err := time.Parse(time.RFC3339, lastRestartStr)
@@ -439,28 +536,23 @@ func (r *LifecycleReconciler) reconcileRecurringRestart(ctx context.Context, obj
 		return ctrl.Result{}, nil
 	}
 
-	var nextScheduledRestart time.Time
-	if sched, ok := schedule.(cron.Schedule); ok {
-		nextScheduledRestart = sched.Next(lastRestartTime)
-	} else if duration, ok := schedule.(time.Duration); ok {
-		nextScheduledRestart = lastRestartTime.Add(duration)
-	}
+	nextScheduledRestart, coalescedAnchor, restartDue := planRecurringRestart(schedule, lastRestartTime, now)
 
-	if now.After(nextScheduledRestart) {
+	if restartDue {
 		logger.Info("Triggering recurring restart", "type", scheduleType, "scheduledAt", nextScheduledRestart)
 		if err := r.triggerRestart(ctx, obj, isDryRun, func(annotations map[string]string) {
-			annotations[LastRestartTimestamp] = nextScheduledRestart.Format(time.RFC3339)
+			annotations[LastRestartTimestamp] = coalescedAnchor.UTC().Format(time.RFC3339Nano)
 		}, logger); err != nil {
 			return ctrl.Result{}, err
 		}
 		if isDryRun {
 			return ctrl.Result{}, nil
 		}
-		return ctrl.Result{Requeue: true}, nil
+		return requeueForNextOccurrence(schedule.Next(coalescedAnchor)), nil
 	} else {
-		requeueAfter := time.Until(nextScheduledRestart)
-		logger.Info("Next recurring restart is scheduled", "type", scheduleType, "at", nextScheduledRestart, "requeueAfter", requeueAfter)
-		return ctrl.Result{RequeueAfter: requeueAfter}, nil
+		result := requeueForNextOccurrence(nextScheduledRestart)
+		logger.Info("Next recurring restart is scheduled", "type", scheduleType, "at", nextScheduledRestart, "requeueAfter", result.RequeueAfter)
+		return result, nil
 	}
 }
 

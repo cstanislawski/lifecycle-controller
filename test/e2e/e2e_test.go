@@ -422,16 +422,15 @@ spec:
 			_, _ = utils.Run(cmd)
 		})
 
-		It("should restart a Deployment periodically based on 'restart-every'", func() {
+		It("should coalesce missed 'restart-every' occurrences into one rollout", func() {
 			deploymentName := "e2e-restart-every"
+			lastRestart := time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339)
 			deploymentYAML := fmt.Sprintf(`
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: %s
   namespace: %s
-  annotations:
-    lifecycle.cezary.dev/restart-every: "2s"
 spec:
   replicas: 1
   selector: { matchLabels: { app: test-restart-every }}
@@ -441,23 +440,35 @@ spec:
 `, deploymentName, testNamespace)
 			utils.ApplyYAML(deploymentYAML)
 
-			var firstRestartAtTime string
-			By("verifying the first restart happens")
+			By("applying the recurring schedule to the existing deployment")
+			cmd := exec.Command(
+				"kubectl", "annotate", "deployment", deploymentName, "-n", testNamespace,
+				"lifecycle.cezary.dev/restart-every=1m",
+				fmt.Sprintf("lifecycle.cezary.dev/last-restart-timestamp=%s", lastRestart),
+			)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			var restartedAt, coalescedAnchor string
+			By("verifying one coalesced restart happens")
 			Eventually(func(g Gomega) {
 				dep := utils.GetDeployment(deploymentName, testNamespace, g)
 				g.Expect(dep.Annotations).To(HaveKey("lifecycle.cezary.dev/last-restart-timestamp"))
-				restartedAt, found := dep.Spec.Template.Annotations["lifecycle.cezary.dev/restartedAt"]
-				g.Expect(found).To(BeTrue(), "first restart should have occurred")
-				firstRestartAtTime = restartedAt
+				g.Expect(dep.Annotations["lifecycle.cezary.dev/last-restart-timestamp"]).NotTo(Equal(lastRestart))
+				var found bool
+				restartedAt, found = dep.Spec.Template.Annotations["lifecycle.cezary.dev/restartedAt"]
+				g.Expect(found).To(BeTrue(), "coalesced restart should have occurred")
+				coalescedAnchor = dep.Annotations["lifecycle.cezary.dev/last-restart-timestamp"]
 			}).WithTimeout(20 * time.Second).WithPolling(pollInterval).Should(Succeed())
 
-			By("verifying a second restart happens, showing recurring logic works")
-			Eventually(func(g Gomega) {
+			By("verifying missed occurrences do not trigger catch-up rollouts")
+			Consistently(func(g Gomega) {
 				dep := utils.GetDeployment(deploymentName, testNamespace, g)
-				restartedAt, found := dep.Spec.Template.Annotations["lifecycle.cezary.dev/restartedAt"]
+				currentRestartedAt, found := dep.Spec.Template.Annotations["lifecycle.cezary.dev/restartedAt"]
 				g.Expect(found).To(BeTrue())
-				g.Expect(restartedAt).NotTo(Equal(firstRestartAtTime), "a second, different restart should have occurred")
-			}).WithTimeout(20 * time.Second).WithPolling(pollInterval).Should(Succeed())
+				g.Expect(currentRestartedAt).To(Equal(restartedAt))
+				g.Expect(dep.Annotations["lifecycle.cezary.dev/last-restart-timestamp"]).To(Equal(coalescedAnchor))
+			}).WithTimeout(5 * time.Second).WithPolling(pollInterval).Should(Succeed())
 		})
 
 		It("should use creationTimestamp for 'delete-after' when specified", func() {
