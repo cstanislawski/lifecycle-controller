@@ -22,7 +22,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -515,7 +514,7 @@ func (r *LifecycleReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	controllerBuilder := ctrl.NewControllerManagedBy(mgr).Named("lifecycle")
-	annotationPredicate := predicate.AnnotationChangedPredicate{}
+	lifecyclePredicate := LifecyclePredicate()
 	// Pass a closure to allow dynamic config updates during tests
 	namespacePredicate := NamespaceScopePredicate(func() ScopeConfig {
 		return r.Config
@@ -567,7 +566,7 @@ func (r *LifecycleReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, a client.Object) []reconcile.Request {
 					return []reconcile.Request{{NamespacedName: client.ObjectKeyFromObject(a)}}
 				}),
-				builder.WithPredicates(annotationPredicate, namespacePredicate),
+				builder.WithPredicates(lifecyclePredicate, namespacePredicate),
 			)
 		}
 	}
