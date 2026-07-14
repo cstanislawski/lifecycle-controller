@@ -117,7 +117,7 @@ Dry-run logs the actions the controller would take without executing them. It ca
 
 ### A Note on Relative Timers
 
-Annotations that use relative durations (`delete-after`, `restart-after`, `restart-every`) start their from a configurable reference point. While the controller's processing of annotations is usually immediate, factors like high cluster load or controller downtime can introduce delays.
+Annotations that use relative durations (`delete-after`, `restart-after`) start their from a configurable reference point. While the controller's processing of annotations is usually immediate, factors like high cluster load or controller downtime can introduce delays.
 
 By default, the timer starts from the `applyTimestamp`. This means the timer begins when the controller processes the annotation on the resource.
 

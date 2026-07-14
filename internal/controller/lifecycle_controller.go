@@ -23,7 +23,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
 // Constants for annotations
@@ -501,7 +500,7 @@ func (r *LifecycleReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				"gvk", req.GVK.String(),
 			)
 		})
-	annotationPredicate := predicate.AnnotationChangedPredicate{}
+	lifecyclePredicate := LifecyclePredicate()
 	// Pass a closure to allow dynamic config updates during tests
 	namespacePredicate := NamespaceScopePredicate(func() ScopeConfig {
 		return r.Config
@@ -549,7 +548,7 @@ func (r *LifecycleReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				handler.TypedEnqueueRequestsFromMapFunc(func(_ context.Context, obj client.Object) []resourceRequest {
 					return []resourceRequest{{NamespacedName: client.ObjectKeyFromObject(obj), GVK: gvk}}
 				}),
-				builder.WithPredicates(annotationPredicate, namespacePredicate),
+				builder.WithPredicates(lifecyclePredicate, namespacePredicate),
 			)
 		}
 	}
