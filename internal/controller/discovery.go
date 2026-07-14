@@ -28,6 +28,7 @@ import (
 
 const discoveryRetryInterval = 30 * time.Second
 
+// Every watched resource may carry either deletion or restart annotations.
 var requiredWatchVerbs = sets.New("get", "list", "watch", "patch", "delete")
 
 type preferredResourceDiscovery interface {
@@ -83,6 +84,7 @@ func (s *coverageState) check() error {
 // ReadinessCheck gates active instances on complete discovery and synchronized
 // watch caches. A replica waiting for leader election has no active coverage
 // responsibility and remains ready to take over.
+// Manager.Elected is process-local and stays open on replicas that lose election.
 func (r *LifecycleReconciler) ReadinessCheck(elected <-chan struct{}, leaderElectionEnabled bool) healthz.Checker {
 	return func(_ *http.Request) error {
 		if leaderElectionEnabled {
@@ -249,6 +251,7 @@ func planResources(lists []*metav1.APIResourceList, config ScopeConfig, logger l
 			ignored := matches(config.IgnoreResources, key)
 
 			if ignored {
+				// Ignore precedence removes this match from the required effective watch set.
 				for _, pattern := range requested {
 					resolvedPatterns[pattern] = true
 				}
