@@ -9,6 +9,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -21,6 +22,102 @@ var _ = Describe("Lifecycle Controller", func() {
 		Timeout       = time.Second * 10
 		Interval      = time.Millisecond * 250
 	)
+
+	Context("when resources of different kinds share an identity", func() {
+		It("reconciles namespaced resources independently", func() {
+			ctx := context.Background()
+			key := types.NamespacedName{Name: "namespaced-kind-collision", Namespace: TestNamespace}
+			deployment := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+				Spec: appsv1.DeploymentSpec{
+					Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": key.Name}},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": key.Name}},
+						Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "nginx"}}},
+					},
+				},
+			}
+			configMap := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+				Data:       map[string]string{"keep": "unchanged"},
+			}
+
+			Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
+			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+			DeferCleanup(func() {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, deployment))).To(Succeed())
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, configMap))).To(Succeed())
+			})
+
+			deployment.Annotations = map[string]string{DeleteAfterAnnotation: "1h"}
+			configMap.Annotations = map[string]string{DeleteAfterAnnotation: "2h"}
+			Expect(k8sClient.Update(ctx, deployment)).To(Succeed())
+			Expect(k8sClient.Update(ctx, configMap)).To(Succeed())
+
+			Eventually(func(g Gomega) {
+				fetchedDeployment := &appsv1.Deployment{}
+				g.Expect(k8sClient.Get(ctx, key, fetchedDeployment)).To(Succeed())
+				g.Expect(fetchedDeployment.Annotations).ToNot(HaveKey(DeleteAfterAnnotation))
+				deploymentDeleteAt, err := time.Parse(time.RFC3339, fetchedDeployment.Annotations[DeleteAtAnnotation])
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(deploymentDeleteAt).To(BeTemporally("~", time.Now().Add(time.Hour), time.Minute))
+
+				fetchedConfigMap := &corev1.ConfigMap{}
+				g.Expect(k8sClient.Get(ctx, key, fetchedConfigMap)).To(Succeed())
+				g.Expect(fetchedConfigMap.Data).To(Equal(map[string]string{"keep": "unchanged"}))
+				g.Expect(fetchedConfigMap.Annotations).ToNot(HaveKey(DeleteAfterAnnotation))
+				configMapDeleteAt, err := time.Parse(time.RFC3339, fetchedConfigMap.Annotations[DeleteAtAnnotation])
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(configMapDeleteAt).To(BeTemporally("~", time.Now().Add(2*time.Hour), time.Minute))
+			}, Timeout, Interval).Should(Succeed())
+		})
+
+		It("reconciles cluster-scoped resources independently", func() {
+			ctx := context.Background()
+			name := "cluster-kind-collision"
+			namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
+			volume := &corev1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{Name: name},
+				Spec: corev1.PersistentVolumeSpec{
+					Capacity:                      corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("1Gi")},
+					AccessModes:                   []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+					PersistentVolumeReclaimPolicy: corev1.PersistentVolumeReclaimRetain,
+					PersistentVolumeSource: corev1.PersistentVolumeSource{
+						HostPath: &corev1.HostPathVolumeSource{Path: "/tmp/cluster-kind-collision"},
+					},
+				},
+			}
+
+			Expect(k8sClient.Create(ctx, namespace)).To(Succeed())
+			Expect(k8sClient.Create(ctx, volume)).To(Succeed())
+			DeferCleanup(func() {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, volume))).To(Succeed())
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, namespace))).To(Succeed())
+			})
+
+			namespace.Annotations = map[string]string{DeleteAfterAnnotation: "3h"}
+			volume.Annotations = map[string]string{DeleteAfterAnnotation: "4h"}
+			Expect(k8sClient.Update(ctx, namespace)).To(Succeed())
+			Expect(k8sClient.Update(ctx, volume)).To(Succeed())
+
+			Eventually(func(g Gomega) {
+				fetchedNamespace := &corev1.Namespace{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, fetchedNamespace)).To(Succeed())
+				g.Expect(fetchedNamespace.Annotations).ToNot(HaveKey(DeleteAfterAnnotation))
+				namespaceDeleteAt, err := time.Parse(time.RFC3339, fetchedNamespace.Annotations[DeleteAtAnnotation])
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(namespaceDeleteAt).To(BeTemporally("~", time.Now().Add(3*time.Hour), time.Minute))
+
+				fetchedVolume := &corev1.PersistentVolume{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, fetchedVolume)).To(Succeed())
+				g.Expect(fetchedVolume.Spec.Capacity[corev1.ResourceStorage]).To(Equal(resource.MustParse("1Gi")))
+				g.Expect(fetchedVolume.Annotations).ToNot(HaveKey(DeleteAfterAnnotation))
+				volumeDeleteAt, err := time.Parse(time.RFC3339, fetchedVolume.Annotations[DeleteAtAnnotation])
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(volumeDeleteAt).To(BeTemporally("~", time.Now().Add(4*time.Hour), time.Minute))
+			}, Timeout, Interval).Should(Succeed())
+		})
+	})
 
 	Context("when handling deletion annotations", func() {
 		It("should convert 'delete-after' to a 'delete-at' annotation", func() {

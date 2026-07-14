@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/tools/record"
@@ -22,7 +23,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 // Constants for annotations
@@ -43,20 +43,18 @@ const (
 	ReferencePointCreationTimestamp = "creationTimestamp"
 )
 
-// ResourceScope holds the GVK and scope information for a discovered resource.
-type ResourceScope struct {
-	GVK          schema.GroupVersionKind
-	IsNamespaced bool
+type resourceRequest struct {
+	types.NamespacedName
+	GVK schema.GroupVersionKind
 }
 
 // LifecycleReconciler reconciles objects with lifecycle annotations.
 type LifecycleReconciler struct {
 	client.Client
-	Scheme         *runtime.Scheme
-	Recorder       record.EventRecorder
-	KnownResources []ResourceScope
-	Config         ScopeConfig
-	GlobalDryRun   bool
+	Scheme       *runtime.Scheme
+	Recorder     record.EventRecorder
+	Config       ScopeConfig
+	GlobalDryRun bool
 }
 
 // +kubebuilder:rbac:groups=*,resources=*,verbs=get;list;watch;delete;update;patch
@@ -133,40 +131,21 @@ func markManagedBy(obj client.Object) {
 	obj.SetAnnotations(annotations)
 }
 
-func (r *LifecycleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *LifecycleReconciler) Reconcile(ctx context.Context, req resourceRequest) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	var foundObject client.Object
-	keyIsNamespaced := req.Namespace != ""
-
-	for _, res := range r.KnownResources {
-		// Skip resources where the scope does not match the request key's scope.
-		// This prevents trying to fetch a namespaced resource with a cluster-scoped key, and vice-versa.
-		if res.IsNamespaced != keyIsNamespaced {
-			continue
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(req.GVK)
+	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
+		if apierrors.IsNotFound(err) {
+			logger.Info("object not found, likely deleted", "gvk", req.GVK)
+			return ctrl.Result{}, nil
 		}
-
-		obj := &unstructured.Unstructured{}
-		obj.SetGroupVersionKind(res.GVK)
-		err := r.Get(ctx, req.NamespacedName, obj)
-
-		if err == nil {
-			foundObject = obj
-			break
-		}
-
-		if !apierrors.IsNotFound(err) {
-			logger.Error(err, "failed to get object", "gvk", res.GVK)
-			return ctrl.Result{}, err
-		}
+		logger.Error(err, "failed to get object", "gvk", req.GVK)
+		return ctrl.Result{}, err
 	}
 
-	if foundObject == nil {
-		logger.Info("object not found in any of the watched GVKs, likely deleted")
-		return ctrl.Result{}, nil
-	}
-
-	return r.reconcileLogic(ctx, foundObject, logger)
+	return r.reconcileLogic(ctx, obj, logger)
 }
 
 func (r *LifecycleReconciler) reconcileLogic(ctx context.Context, obj client.Object, logger logr.Logger) (ctrl.Result, error) {
@@ -347,17 +326,10 @@ func (r *LifecycleReconciler) handleRestart(ctx context.Context, obj *unstructur
 		}
 		if now.After(restartTime) {
 			logger.Info("Triggering one-time restart based on restart-at annotation", "restartTime", restartTime)
-			if err := r.triggerRestart(ctx, obj, isDryRun, logger); err != nil {
-				return ctrl.Result{}, err
-			}
-			if !isDryRun {
+			if err := r.triggerRestart(ctx, obj, isDryRun, func(annotations map[string]string) {
 				delete(annotations, RestartAtAnnotation)
-				obj.SetAnnotations(annotations)
-				markManagedBy(obj)
-				if err := r.Update(ctx, obj); err != nil {
-					logger.Error(err, "failed to remove restart-at annotation")
-					return ctrl.Result{}, err
-				}
+			}, logger); err != nil {
+				return ctrl.Result{}, err
 			}
 			return ctrl.Result{}, nil
 		} else {
@@ -436,17 +408,10 @@ func (r *LifecycleReconciler) reconcileRecurringRestart(ctx context.Context, obj
 
 	if now.After(nextScheduledRestart) {
 		logger.Info("Triggering recurring restart", "type", scheduleType, "scheduledAt", nextScheduledRestart)
-		if err := r.triggerRestart(ctx, obj, isDryRun, logger); err != nil {
-			return ctrl.Result{}, err
-		}
-		if !isDryRun {
+		if err := r.triggerRestart(ctx, obj, isDryRun, func(annotations map[string]string) {
 			annotations[LastRestartTimestamp] = nextScheduledRestart.Format(time.RFC3339)
-			obj.SetAnnotations(annotations)
-			markManagedBy(obj)
-			if err := r.Update(ctx, obj); err != nil {
-				logger.Error(err, "failed to update last-restart-timestamp after restart")
-				return ctrl.Result{}, err
-			}
+		}, logger); err != nil {
+			return ctrl.Result{}, err
 		}
 		return ctrl.Result{Requeue: true}, nil
 	} else {
@@ -456,8 +421,8 @@ func (r *LifecycleReconciler) reconcileRecurringRestart(ctx context.Context, obj
 	}
 }
 
-// triggerRestart injects the annotation into the pod template to cause a rollout.
-func (r *LifecycleReconciler) triggerRestart(ctx context.Context, obj *unstructured.Unstructured, isDryRun bool, logger logr.Logger) error {
+// triggerRestart applies the rollout marker and its acknowledgement in one patch.
+func (r *LifecycleReconciler) triggerRestart(ctx context.Context, obj *unstructured.Unstructured, isDryRun bool, acknowledge func(map[string]string), logger logr.Logger) error {
 	restartedAtTime := time.Now().UTC().Format(time.RFC3339)
 	logger.Info("Attempting to trigger restart", "restartedAt", restartedAtTime)
 
@@ -466,6 +431,15 @@ func (r *LifecycleReconciler) triggerRestart(ctx context.Context, obj *unstructu
 		r.Recorder.Event(obj, "Normal", "DryRunRestart", "Dry-run: Resource would be restarted now.")
 		return nil
 	}
+
+	base := obj.DeepCopy()
+	annotations := obj.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	acknowledge(annotations)
+	obj.SetAnnotations(annotations)
+	markManagedBy(obj)
 
 	templateAnnotations, found, err := unstructured.NestedStringMap(obj.Object, "spec", "template", "metadata", "annotations")
 	if err != nil {
@@ -485,15 +459,15 @@ func (r *LifecycleReconciler) triggerRestart(ctx context.Context, obj *unstructu
 		r.Recorder.Eventf(obj, "Warning", "RestartFailed", "Could not set pod template annotations: %v", err)
 		return err
 	}
-	markManagedBy(obj)
 
-	if err := r.Update(ctx, obj); err != nil {
-		logger.Error(err, "failed to update object to trigger restart")
-		r.Recorder.Eventf(obj, "Warning", "RestartFailed", "Could not update object to trigger restart: %v", err)
+	patch := client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})
+	if err := r.Patch(ctx, obj, patch); err != nil {
+		logger.Error(err, "failed to patch object to trigger restart")
+		r.Recorder.Eventf(obj, "Warning", "RestartFailed", "Could not patch object to trigger restart: %v", err)
 		return err
 	}
 
-	logger.Info("Successfully updated object to trigger restart")
+	logger.Info("Successfully patched object to trigger restart")
 	r.Recorder.Event(obj, "Normal", "RestartTriggered", "Triggered a rolling restart of the resource.")
 	return nil
 }
@@ -513,7 +487,19 @@ func (r *LifecycleReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		log.Log.Error(err, "failed to get all server preferred resources, continuing with available ones")
 	}
 
-	controllerBuilder := ctrl.NewControllerManagedBy(mgr).Named("lifecycle")
+	controllerLogger := mgr.GetLogger().WithValues("controller", "lifecycle")
+	controllerBuilder := builder.TypedControllerManagedBy[resourceRequest](mgr).
+		Named("lifecycle").
+		WithLogConstructor(func(req *resourceRequest) logr.Logger {
+			if req == nil {
+				return controllerLogger
+			}
+			return controllerLogger.WithValues(
+				"namespace", req.Namespace,
+				"name", req.Name,
+				"gvk", req.GVK.String(),
+			)
+		})
 	lifecyclePredicate := LifecyclePredicate()
 	// Pass a closure to allow dynamic config updates during tests
 	namespacePredicate := NamespaceScopePredicate(func() ScopeConfig {
@@ -547,24 +533,20 @@ func (r *LifecycleReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				continue
 			}
 
-			// Add the GVK and its scope to our list for the Reconcile function
-			r.KnownResources = append(r.KnownResources, ResourceScope{
-				GVK: schema.GroupVersionKind{
-					Group:   gv.Group,
-					Version: gv.Version,
-					Kind:    resource.Kind,
-				},
-				IsNamespaced: resource.Namespaced,
-			})
+			gvk := schema.GroupVersionKind{
+				Group:   gv.Group,
+				Version: gv.Version,
+				Kind:    resource.Kind,
+			}
 
 			u := &unstructured.Unstructured{}
-			u.SetGroupVersionKind(r.KnownResources[len(r.KnownResources)-1].GVK)
+			u.SetGroupVersionKind(gvk)
 
 			setupLog.Info("Setting up watch for resource", "gvk", u.GroupVersionKind().String())
 			controllerBuilder = controllerBuilder.Watches(
 				u,
-				handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, a client.Object) []reconcile.Request {
-					return []reconcile.Request{{NamespacedName: client.ObjectKeyFromObject(a)}}
+				handler.TypedEnqueueRequestsFromMapFunc(func(_ context.Context, obj client.Object) []resourceRequest {
+					return []resourceRequest{{NamespacedName: client.ObjectKeyFromObject(obj), GVK: gvk}}
 				}),
 				builder.WithPredicates(lifecyclePredicate, namespacePredicate),
 			)
