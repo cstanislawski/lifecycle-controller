@@ -12,8 +12,12 @@ on:
       - 'go.sum'
       - '.github/workflows/test.yml'
 
+permissions: {}
+
 jobs:
   test:
+    permissions:
+      contents: read
     name: Unit tests
     runs-on: ubuntu-latest
     steps:

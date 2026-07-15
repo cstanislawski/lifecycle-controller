@@ -13,8 +13,12 @@ on:
       - '.golangci.yml'
       - '.github/workflows/lint.yml'
 
+permissions: {}
+
 jobs:
   lint:
+    permissions:
+      contents: read
     name: Go lint
     runs-on: ubuntu-latest
     steps:

@@ -11,11 +11,15 @@ on:
       - 'Makefile'
       - '.github/workflows/lint-helm.yml'
 
+permissions: {}
+
 env:
   HELM_CHART_PATH: charts/lifecycle-controller
 
 jobs:
   lint:
+    permissions:
+      contents: read
     name: Helm lint
     runs-on: ubuntu-latest
     steps:

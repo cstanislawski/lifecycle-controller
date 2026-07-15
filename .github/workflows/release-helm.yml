@@ -13,6 +13,8 @@ on:
       - '.github/workflows/release-helm.yml'
   workflow_dispatch:
 
+permissions: {}
+
 env:
   HELM_CHART_PATH: charts/lifecycle-controller
 

@@ -14,11 +14,15 @@ on:
       - 'go.sum'
       - '.github/workflows/test-e2e-helm.yml'
 
+permissions: {}
+
 env:
   HELM_CHART_PATH: charts/lifecycle-controller
 
 jobs:
   test-e2e-helm:
+    permissions:
+      contents: read
     name: Helm E2E tests
     runs-on: ubuntu-latest
     steps:

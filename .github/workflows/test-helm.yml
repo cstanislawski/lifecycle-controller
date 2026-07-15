@@ -11,11 +11,15 @@ on:
       - 'Makefile'
       - '.github/workflows/test-helm.yml'
 
+permissions: {}
+
 env:
   HELM_CHART_PATH: charts/lifecycle-controller
 
 jobs:
   template-test:
+    permissions:
+      contents: read
     name: Helm template
     runs-on: ubuntu-latest
     steps:

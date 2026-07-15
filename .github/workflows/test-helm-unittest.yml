@@ -11,11 +11,15 @@ on:
       - 'Makefile'
       - '.github/workflows/test-helm-unittest.yml'
 
+permissions: {}
+
 env:
   HELM_CHART_PATH: charts/lifecycle-controller
 
 jobs:
   helm-unittest:
+    permissions:
+      contents: read
     name: Helm unit tests
     runs-on: ubuntu-latest
     steps:
