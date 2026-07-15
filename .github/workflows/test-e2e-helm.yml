@@ -10,7 +10,6 @@ on:
       - 'charts/**'
       - 'test/e2e-helm/**'
       - 'Makefile'
-      - 'hack/install-kind.sh'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/test-e2e-helm.yml'
@@ -54,7 +53,7 @@ jobs:
       - name: Restore kind
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: ~/.cache/kind
+          path: ${{ runner.tool_cache }}/kind
           key: kind-${{ runner.os }}-${{ runner.arch }}-${{ env.KIND_VERSION }}
 
       - run: go version
@@ -70,8 +69,11 @@ jobs:
 
       - run: helm version
 
-      - name: Install kind
-        run: hack/install-kind.sh
+      - name: Set up kind
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
+        with:
+          install_only: true
+          version: ${{ env.KIND_VERSION }}
 
       - name: Run Helm E2E tests
         run: |
