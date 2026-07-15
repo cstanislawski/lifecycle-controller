@@ -82,8 +82,8 @@ The controller's behavior is configured entirely through annotations.
   - `lifecycle.cezary.dev/restart-at`: Performs a one-time rolling restart at a specific date and time.
     - The value must be an RFC3339 timestamp with explicit timezone offset (`Z` or `±hh:mm`).
   - `lifecycle.cezary.dev/restart-after`: Performs a one-time rolling restart after a relative duration (e.g., `1h`). The controller converts this to an absolute `restart-at` annotation. Supports `s`, `m`, `h`, and `d` (days).
-  - `lifecycle.cezary.dev/restart-every`: Performs a rolling restart on a recurring, relative basis (e.g., `7d` to restart weekly). Supports `s`, `m`, `h`, and `d` (days).
-  - `lifecycle.cezary.dev/restart-cron`: Performs a rolling restart based on a cron expression (e.g., `"0 3 * * *"` for daily at 3 AM).
+  - `lifecycle.cezary.dev/restart-every`: Performs a rolling restart on a recurring, relative basis (e.g., `7d` to restart weekly). Supports `s`, `m`, `h`, and `d` (days), with a minimum duration of `1m`.
+  - `lifecycle.cezary.dev/restart-cron`: Performs a rolling restart based on a standard five-field, minute-resolution cron expression (e.g., `"0 3 * * *"` for daily at 3 AM).
   - `lifecycle.cezary.dev/cron-timezone`: Optional timezone for `restart-cron` only. Must be valid IANA timezone (e.g., `America/New_York`). Defaults to `UTC`.
   - A resource is considered pod-spawning if it has a `spec.template.metadata.annotations` field. The restart mechanism works by patching this field, which is the standard Kubernetes pattern for triggering a rolling update.
 
@@ -96,8 +96,8 @@ The controller's behavior is configured entirely through annotations.
       - Reads the schedule (`restart-every` or `restart-cron`) and the `last-restart-timestamp`,
       - Calculates the `nextScheduledRestart` time based on the last one,
       - Compares the current time to the `nextScheduledRestart` time,
-      - If the current time is at or after `nextScheduledRestart`, the controller triggers the restart,
-      - It then updates the `lifecycle.cezary.dev/last-restart-timestamp` to the value of `nextScheduledRestart`. This anchors the next cycle to the previous scheduled time, preventing schedule drift.
+      - If the current time is at or after `nextScheduledRestart`, the controller triggers one restart,
+      - If more than one restart was missed, the controller triggers only one, updates `lifecycle.cezary.dev/last-restart-timestamp`, and schedules the next restart.
   - **Cleanup** - After a one-time `restart-at` action is successfully triggered, the controller will remove the original `lifecycle.cezary.dev/restart-at` annotation to ensure the action is idempotent.
 
 **Dry-run**

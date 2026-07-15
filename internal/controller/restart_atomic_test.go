@@ -70,6 +70,7 @@ func TestRecurringRestartCommittedPatchDoesNotReplayAfterLostResponse(t *testing
 	ctx := context.Background()
 	key := types.NamespacedName{Name: "recurring-lost-response", Namespace: "default"}
 	duration := 2 * time.Hour
+	schedule := intervalRecurringSchedule{duration: duration}
 	lastRestart := time.Now().UTC().Add(-duration - time.Minute).Truncate(time.Second)
 	nextRestart := lastRestart.Add(duration)
 	obj := testDeployment(key.Name, map[string]string{
@@ -99,7 +100,7 @@ func TestRecurringRestartCommittedPatchDoesNotReplayAfterLostResponse(t *testing
 	}
 
 	observed := getObject(t, r, key)
-	if _, err := r.reconcileRecurringRestart(ctx, observed, false, "interval", duration, logr.Discard()); !errors.Is(err, lostResponse) {
+	if _, err := r.reconcileRecurringRestart(ctx, observed, false, "interval", schedule, logr.Discard()); !errors.Is(err, lostResponse) {
 		t.Fatalf("reconcile recurring restart error = %v, want lost response", err)
 	}
 
@@ -115,7 +116,7 @@ func TestRecurringRestartCommittedPatchDoesNotReplayAfterLostResponse(t *testing
 		t.Fatalf("update calls = %d, want 0", updateCalls)
 	}
 
-	if _, err := r.reconcileRecurringRestart(ctx, committed, false, "interval", duration, logr.Discard()); err != nil {
+	if _, err := r.reconcileRecurringRestart(ctx, committed, false, "interval", schedule, logr.Discard()); err != nil {
 		t.Fatalf("retry recurring restart: %v", err)
 	}
 	if patchCalls != 1 {

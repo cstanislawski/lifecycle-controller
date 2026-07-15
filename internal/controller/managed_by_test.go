@@ -115,7 +115,7 @@ func TestManagedByRecurringRestartInitializationStaysTopLevelOnly(t *testing.T) 
 		Client: fake.NewClientBuilder().WithObjects(obj.DeepCopy()).Build(),
 	}
 
-	if _, err := r.reconcileRecurringRestart(ctx, obj, false, "interval", time.Hour, logr.Discard()); err != nil {
+	if _, err := r.reconcileRecurringRestart(ctx, obj, false, "interval", intervalRecurringSchedule{duration: time.Hour}, logr.Discard()); err != nil {
 		t.Fatalf("reconcile recurring restart: %v", err)
 	}
 
