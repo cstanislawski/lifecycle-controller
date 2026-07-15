@@ -8,12 +8,12 @@ on:
       - reopened
       - ready_for_review
     paths:
-      - '.github/workflows/**'
+      - '.github/**'
   push:
     branches:
       - main
     paths:
-      - '.github/workflows/**'
+      - '.github/**'
   workflow_dispatch:
 
 concurrency:
@@ -37,5 +37,5 @@ jobs:
         uses: zizmorcore/zizmor-action@6599ee8b7a49aef6a770f63d261d214911a7ce02 # v0.6.0
         with:
           advanced-security: false
-          inputs: .github/workflows
+          inputs: .github
           version: v1.27.0
