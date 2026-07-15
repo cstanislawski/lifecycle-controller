@@ -19,8 +19,27 @@ on:
       - 'test/e2e/**'
       - 'test/utils/**'
       - '.github/workflows/test-e2e.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'internal/**'
+      - 'cmd/**'
+      - 'api/**'
+      - 'Dockerfile'
+      - 'Makefile'
+      - 'config/**'
+      - 'test/e2e/**'
+      - 'test/utils/**'
+      - '.github/workflows/test-e2e.yml'
 
 permissions: {}
+
+env:
+  KIND_VERSION: v0.32.0
 
 jobs:
   test-e2e:
@@ -35,15 +54,17 @@ jobs:
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
+          cache: true
+          cache-dependency-path: go.sum
           go-version-file: go.mod
 
       - run: go version
 
-      - name: Install latest kind release
-        run: |
-          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
-          chmod +x ./kind
-          sudo mv ./kind /usr/local/bin/kind
+      - name: Set up kind
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
+        with:
+          install_only: true
+          version: ${{ env.KIND_VERSION }}
 
       - name: Verify kind installation
         run: kind version

@@ -10,11 +10,19 @@ on:
       - 'charts/**'
       - 'Makefile'
       - '.github/workflows/test-helm-unittest.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'charts/**'
+      - 'Makefile'
+      - '.github/workflows/test-helm-unittest.yml'
 
 permissions: {}
 
 env:
   HELM_CHART_PATH: charts/lifecycle-controller
+  HELM_UNITTEST_VERSION: v1.1.1
 
 jobs:
   helm-unittest:
@@ -39,7 +47,11 @@ jobs:
       - run: helm version
 
       - name: Install helm-unittest plugin
-        run: helm plugin install https://github.com/helm-unittest/helm-unittest --verify=false
+        run: |
+          if [ ! -d "$(helm env HELM_PLUGINS)/helm-unittest" ]; then
+            helm plugin install https://github.com/helm-unittest/helm-unittest \
+              --version "$HELM_UNITTEST_VERSION" --verify=false
+          fi
 
       - name: Run Helm unit tests
         run: make helm-unittest HELM_CHART_PATH=${{ env.HELM_CHART_PATH }}

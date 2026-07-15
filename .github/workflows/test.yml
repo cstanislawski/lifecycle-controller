@@ -11,6 +11,15 @@ on:
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/test.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - '.github/workflows/test.yml'
 
 permissions: {}
 
@@ -27,6 +36,8 @@ jobs:
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
+          cache: true
+          cache-dependency-path: go.sum
           go-version-file: go.mod
 
       - run: go version
