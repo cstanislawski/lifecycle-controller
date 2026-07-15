@@ -11,6 +11,15 @@ on:
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/test.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - '.github/workflows/test.yml'
 
 permissions: {}
 
@@ -30,7 +39,17 @@ jobs:
           cache: false
           go-version-file: go.mod
 
+      - name: Cache Go modules and build cache
+        if: github.event_name == 'push'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}
+
       - name: Restore Go modules and build cache
+        if: github.event_name == 'pull_request'
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
@@ -38,7 +57,15 @@ jobs:
             ~/.cache/go-build
           key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}
 
+      - name: Cache Go tools and envtest assets
+        if: github.event_name == 'push'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: bin
+          key: go-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'Makefile') }}
+
       - name: Restore Go tools and envtest assets
+        if: github.event_name == 'pull_request'
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: bin
