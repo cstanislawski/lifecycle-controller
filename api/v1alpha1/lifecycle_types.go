@@ -70,7 +70,3 @@ type LifecycleList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []Lifecycle `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&Lifecycle{}, &LifecycleList{})
-}

@@ -465,7 +465,7 @@ func (r *LifecycleReconciler) buildController(mgr ctrl.Manager, resources []disc
 }
 
 func (r *LifecycleReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	r.Recorder = mgr.GetEventRecorderFor("lifecycle-controller")
+	r.Recorder = newEventRecorderAdapter(mgr.GetEventRecorder("lifecycle-controller"))
 	r.coverage = newCoverageState()
 
 	discoveryClient := r.discovery

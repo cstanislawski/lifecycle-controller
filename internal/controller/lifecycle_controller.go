@@ -16,7 +16,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -119,7 +118,7 @@ func requeueForNextOccurrence(next time.Time) ctrl.Result {
 type LifecycleReconciler struct {
 	client.Client
 	Scheme       *runtime.Scheme
-	Recorder     record.EventRecorder
+	Recorder     eventRecorder
 	Config       ScopeConfig
 	GlobalDryRun bool
 	discovery    preferredResourceDiscovery
@@ -128,6 +127,7 @@ type LifecycleReconciler struct {
 
 // +kubebuilder:rbac:groups=*,resources=*,verbs=get;list;watch;delete;update;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // parseExtendedDuration enhances time.ParseDuration to support 'd' for days.
 func parseExtendedDuration(durationStr string) (time.Duration, error) {
