@@ -291,8 +291,9 @@ func planResources(lists []*metav1.APIResourceList, config ScopeConfig, logger l
 	}
 
 	var missing []string
+	ignoredPatterns := sets.New(config.IgnoreResources...)
 	for _, pattern := range config.WatchResources {
-		if !resolvedPatterns[pattern] {
+		if !resolvedPatterns[pattern] && !ignoredPatterns.Has(pattern) {
 			missing = append(missing, pattern)
 		}
 	}

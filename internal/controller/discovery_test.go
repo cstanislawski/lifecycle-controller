@@ -263,16 +263,23 @@ func TestReadinessCheckTreatsOnlyPassiveLeaderReplicaAsReady(t *testing.T) {
 }
 
 func TestExplicitIgnorePrecedenceCanProduceEmptyWatchSet(t *testing.T) {
-	plan, err := planResources(
-		[]*metav1.APIResourceList{coreResources(apiResource("configmaps", "ConfigMap", watchVerbs))},
-		ScopeConfig{WatchResources: []string{"configmaps"}, IgnoreResources: []string{"configmaps"}},
-		logr.Discard(),
-	)
-	if err != nil {
-		t.Fatalf("ignore precedence should be valid: %v", err)
-	}
-	if len(plan.resources) != 0 {
-		t.Fatalf("expected no watches, got %#v", plan.resources)
+	for name, lists := range map[string][]*metav1.APIResourceList{
+		"resource present": {coreResources(apiResource("configmaps", "ConfigMap", watchVerbs))},
+		"resource absent":  {coreResources(apiResource("pods", "Pod", watchVerbs))},
+	} {
+		t.Run(name, func(t *testing.T) {
+			plan, err := planResources(
+				lists,
+				ScopeConfig{WatchResources: []string{"configmaps"}, IgnoreResources: []string{"configmaps"}},
+				logr.Discard(),
+			)
+			if err != nil {
+				t.Fatalf("ignore precedence should be valid: %v", err)
+			}
+			if len(plan.resources) != 0 {
+				t.Fatalf("expected no watches, got %#v", plan.resources)
+			}
+		})
 	}
 }
 
