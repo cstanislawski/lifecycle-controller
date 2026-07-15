@@ -19,21 +19,21 @@ jobs:
     name: Helm unit tests
     runs-on: ubuntu-latest
     steps:
-      - name: Clone the code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Get helm version from file
+      - name: Read Helm version from .Version
         id: get-helm-version
         run: |
           echo "version=$(head ${{ env.HELM_CHART_PATH }}/.Version)" >> $GITHUB_OUTPUT
 
-      - name: Set up Helm
-        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
         with:
           version: ${{ steps.get-helm-version.outputs.version }}
+
+      - run: helm version
 
       - name: Install helm-unittest plugin
         run: helm plugin install https://github.com/helm-unittest/helm-unittest --verify=false
 
-      - name: Running Helm Unit Tests
+      - name: Run Helm unit tests
         run: make helm-unittest HELM_CHART_PATH=${{ env.HELM_CHART_PATH }}
