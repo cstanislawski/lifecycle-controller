@@ -48,8 +48,13 @@ jobs:
       - name: Download Go modules
         run: go mod download
 
-      - name: Build Go tools and envtest assets
-        run: make kustomize controller-gen setup-envtest
+      - name: Build Go tools
+        run: make kustomize controller-gen envtest
+
+      - name: Download envtest assets
+        run: |
+          envtest_version="$(go list -m -f '{{ .Version }}' k8s.io/api | awk -F'[v.]' '{printf "1.%d", $3}')"
+          bin/setup-envtest use "$envtest_version" --bin-dir bin -p path
 
       - name: Read Helm version from .Version
         id: get-helm-version
