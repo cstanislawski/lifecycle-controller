@@ -97,8 +97,7 @@ The controller's behavior is configured entirely through annotations.
       - Calculates the `nextScheduledRestart` time based on the last one,
       - Compares the current time to the `nextScheduledRestart` time,
       - If the current time is at or after `nextScheduledRestart`, the controller triggers one restart,
-      - If more than one restart was missed, the controller triggers only one,
-      - Updates `lifecycle.cezary.dev/last-restart-timestamp` and schedules the next restart.
+      - If more than one restart was missed, the controller triggers only one, updates `lifecycle.cezary.dev/last-restart-timestamp`, and schedules the next restart.
   - **Cleanup** - After a one-time `restart-at` action is successfully triggered, the controller will remove the original `lifecycle.cezary.dev/restart-at` annotation to ensure the action is idempotent.
 
 **Dry-run**
