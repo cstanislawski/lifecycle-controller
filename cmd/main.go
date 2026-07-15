@@ -1,3 +1,4 @@
+// Temporary cache-verification change; no runtime behavior change.
 package main
 
 import (
