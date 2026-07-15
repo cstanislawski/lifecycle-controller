@@ -11,15 +11,21 @@ on:
       - 'Makefile'
       - '.github/workflows/test-helm.yml'
 
+permissions: {}
+
 env:
   HELM_CHART_PATH: charts/lifecycle-controller
 
 jobs:
   template-test:
+    permissions:
+      contents: read
     name: Helm template
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Read Helm version from .Version
         id: get-helm-version
