@@ -1,4 +1,4 @@
-name: GitHub Actions Security
+name: GitHub Configuration Security
 
 on:
   pull_request:
@@ -24,7 +24,7 @@ permissions: {}
 
 jobs:
   zizmor:
-    name: Audit GitHub Actions
+    name: Audit GitHub Configuration
     runs-on: ubuntu-latest
     permissions:
       contents: read
