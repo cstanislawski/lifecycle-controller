@@ -73,9 +73,8 @@ var _ = BeforeSuite(func() {
 	Expect(err).ToNot(HaveOccurred())
 
 	Reconciler = &LifecycleReconciler{
-		Client:   k8sManager.GetClient(),
-		Scheme:   k8sManager.GetScheme(),
-		Recorder: k8sManager.GetEventRecorderFor("lifecycle-controller-test"),
+		Client: k8sManager.GetClient(),
+		Scheme: k8sManager.GetScheme(),
 		// Config: initialized as empty (allow all) by default
 	}
 

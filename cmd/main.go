@@ -210,7 +210,6 @@ func main() {
 		Scheme:       mgr.GetScheme(),
 		Config:       scopeConfig,
 		GlobalDryRun: globalDryRun,
-		Recorder:     mgr.GetEventRecorderFor("lifecycle-controller"),
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Lifecycle")

@@ -96,6 +96,21 @@ tests:
           path: rules[0].resources[0]
           value: "*"
 
+  - it: grants structured event permissions
+    documentSelector:
+      path: kind
+      value: ClusterRole
+    asserts:
+      - equal:
+          path: rules[2].apiGroups[0]
+          value: events.k8s.io
+      - equal:
+          path: rules[2].resources[0]
+          value: events
+      - equal:
+          path: rules[2].verbs
+          value: ["create", "patch"]
+
   - it: fails on malformed value with empty resource segment
     set:
       controllerManager:
