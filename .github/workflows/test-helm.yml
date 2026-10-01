@@ -10,6 +10,13 @@ on:
       - 'charts/**'
       - 'Makefile'
       - '.github/workflows/test-helm.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'charts/**'
+      - 'Makefile'
+      - '.github/workflows/test-helm.yml'
 
 permissions: {}
 
