@@ -198,3 +198,10 @@ controllerManager:
       - "default"
       - "dev-*"
 ```
+
+## Controller releases
+
+Controller releases use `vX.Y.Z` tags. GoReleaser excludes `lifecycle-controller-*`
+Helm tags when it searches for the previous controller tag. It uses the GitHub
+release notes generator to create PR-based notes and a changelog link.
+If a release already exists, GoReleaser preserves its description by default.
