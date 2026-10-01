@@ -3,6 +3,13 @@ version: 2
 
 project_name: lifecycle-controller
 
+git:
+  ignore_tags:
+    - lifecycle-controller-*
+
+changelog:
+  use: github-native
+
 release:
   prerelease: auto
 
