@@ -102,7 +102,7 @@ cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests.
-	KIND=$(KIND) KIND_CLUSTER=$(E2E_KIND_CLUSTER) IMG=$(IMG) NAMESPACE=$(NAMESPACE) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
+	KIND=$(KIND) KIND_CLUSTER=$(E2E_KIND_CLUSTER) IMG=$(IMG) NAMESPACE=$(NAMESPACE) go test -tags=e2e ./test/e2e/ -v
 	$(MAKE) cleanup-test-e2e
 
 .PHONY: lint
@@ -300,5 +300,5 @@ undeploy-helm: ## Undeploy controller using Helm.
 
 .PHONY: test-e2e-helm
 test-e2e-helm: setup-test-e2e manifests generate fmt vet ## Run the Helm e2e tests.
-	KIND=$(KIND) KIND_CLUSTER=$(E2E_KIND_CLUSTER) IMG=$(IMG) go test -tags=e2e_helm ./test/e2e-helm/ -v -ginkgo.v
+	KIND=$(KIND) KIND_CLUSTER=$(E2E_KIND_CLUSTER) IMG=$(IMG) go test -tags=e2e_helm ./test/e2e-helm/ -v
 	$(MAKE) cleanup-test-e2e
