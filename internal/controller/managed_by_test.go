@@ -18,6 +18,8 @@ func testDeployment(name string, annotations map[string]string) *unstructured.Un
 	obj.SetGroupVersionKind(schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"})
 	obj.SetName(name)
 	obj.SetNamespace("default")
+	obj.SetUID(types.UID("uid-" + name))
+	obj.SetResourceVersion("1")
 	obj.SetAnnotations(annotations)
 	return obj
 }

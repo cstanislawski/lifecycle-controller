@@ -360,7 +360,10 @@ func (r *LifecycleReconciler) handleDeletion(ctx context.Context, obj *unstructu
 		if time.Now().After(deleteAtTime) {
 			logger.Info("Deleting resource based on delete-at annotation", "targetTime", deleteAtTime.String())
 			if !isDryRun {
-				if err := r.Delete(ctx, obj); err != nil {
+				uid := obj.GetUID()
+				resourceVersion := obj.GetResourceVersion()
+				preconditions := client.Preconditions{UID: &uid, ResourceVersion: &resourceVersion}
+				if err := r.Delete(ctx, obj, preconditions); err != nil {
 					if !apierrors.IsNotFound(err) {
 						logger.Error(err, "failed to delete object")
 						r.Recorder.Eventf(obj, "Warning", "DeletionFailed", "Failed to delete resource: %v", err)
