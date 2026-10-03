@@ -90,6 +90,21 @@ var _ = Describe("Lifecycle Controller Helm E2E", Ordered, func() {
 				g.Expect(status).To(Equal("Running"))
 			}
 			Eventually(verifyControllerUp).WithTimeout(deploymentTimeout).WithPolling(pollInterval).Should(Succeed())
+
+			By("waiting for all default resource caches to synchronize")
+			_, err = utils.Run(exec.Command("kubectl", "rollout", "status",
+				"deployment/"+releaseName+"-lifecycle-controller", "-n", managerNamespace, "--timeout=120s"))
+			Expect(err).NotTo(HaveOccurred())
+			By("checking the default resource permissions")
+			serviceAccount := "system:serviceaccount:" + managerNamespace + ":" + releaseName + "-lifecycle-controller"
+			for _, resource := range []string{
+				"deployments.apps", "configmaps", "persistentvolumeclaims", "namespaces", "persistentvolumes",
+			} {
+				checkScopedAccess(serviceAccount, "delete", resource, managerNamespace, "yes")
+			}
+			for _, resource := range []string{"secrets", "nodes", "clusterroles.rbac.authorization.k8s.io"} {
+				checkScopedAccess(serviceAccount, "get", resource, managerNamespace, "no")
+			}
 		})
 
 		It("should perform a basic lifecycle action (smoke test)", func() {
@@ -207,77 +222,7 @@ stringData:
 		})
 
 		It("should only process namespaces specified in watch-namespace", func() {
-			allowedNS := "e2e-allowed-ns"
-			ignoredNS := "e2e-ignored-ns"
-
-			cmd := exec.Command("kubectl", "create", "ns", allowedNS)
-			utils.Run(cmd)
-			cmd = exec.Command("kubectl", "create", "ns", ignoredNS)
-			utils.Run(cmd)
-
-			defer func() {
-				exec.Command("kubectl", "delete", "ns", allowedNS).Run()
-				exec.Command("kubectl", "delete", "ns", ignoredNS).Run()
-			}()
-
-			By("installing the helm chart watching ONLY allowed-ns")
-			repoAndTag := strings.SplitN(projectImage, ":", 2)
-			repo, tag := repoAndTag[0], repoAndTag[1]
-
-			cmd = exec.Command("helm", "install", scopedReleaseName, chartPath,
-				"--namespace", managerNamespace,
-				"--set", fmt.Sprintf("image.repository=%s", repo),
-				"--set", fmt.Sprintf("image.tag=%s", tag),
-				"--set", "image.pullPolicy=Never",
-				"--set", fmt.Sprintf("controllerManager.scope.watchNamespaces[0]=%s", allowedNS),
-			)
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
-
-			Eventually(func(g Gomega) {
-				pod := utils.GetPodForRelease(g, scopedReleaseName, managerNamespace)
-				g.Expect(pod.Status.Phase).To(Equal(corev1.PodRunning))
-			}).WithTimeout(deploymentTimeout).WithPolling(pollInterval).Should(Succeed())
-
-			By("Creating ConfigMap in allowed NS")
-			allowedCM := "cm-allowed"
-			utils.ApplyYAML(fmt.Sprintf(`
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: %s
-  namespace: %s
-  annotations:
-    lifecycle.cezary.dev/delete-after: "2s"
-data: { key: val }
-`, allowedCM, allowedNS))
-
-			By("Creating ConfigMap in ignored NS")
-			ignoredCM := "cm-ignored"
-			utils.ApplyYAML(fmt.Sprintf(`
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: %s
-  namespace: %s
-  annotations:
-    lifecycle.cezary.dev/delete-after: "2s"
-data: { key: val }
-`, ignoredCM, ignoredNS))
-
-			By("Verifying allowed NS resource IS deleted")
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "cm", allowedCM, "-n", allowedNS)
-				_, err := utils.Run(cmd)
-				g.Expect(err).To(HaveOccurred())
-			}).WithTimeout(safeTimeout).WithPolling(pollInterval).Should(Succeed())
-
-			By("Verifying ignored NS resource is NOT deleted")
-			Consistently(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "cm", ignoredCM, "-n", ignoredNS)
-				_, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-			}).WithTimeout(consistentDuration).WithPolling(pollInterval).Should(Succeed())
+			verifyNamespaceScopedRBAC(chartPath, scopedReleaseName, managerNamespace)
 		})
 
 		It("should prioritize ignore-resource over watch-resource (Precedence)", func() {

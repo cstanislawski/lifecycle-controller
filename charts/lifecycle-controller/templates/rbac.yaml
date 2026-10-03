@@ -1,93 +1,40 @@
 {{- if .Values.rbac.create -}}
+{{- $root := . -}}
+{{- $namespaced := eq (include "lifecycle-controller.rbacScope" .) "namespaced" -}}
+{{- $namespaces := list "" -}}
+{{- if $namespaced -}}
+  {{- $namespaces = include "lifecycle-controller.rbacNamespaces" . | fromJsonArray -}}
+{{- end -}}
+{{- range $namespaces }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: {{ ternary "Role" "ClusterRole" $namespaced }}
 metadata:
-  name: {{ include "lifecycle-controller.fullname" . }}-manager-role
+  name: {{ include "lifecycle-controller.fullname" $root }}-manager-role
+  {{- if $namespaced }}
+  namespace: {{ . | quote }}
+  {{- end }}
   labels:
-    {{- include "lifecycle-controller.labels" . | nindent 4 }}
+    {{- include "lifecycle-controller.labels" $root | nindent 4 }}
 rules:
-{{- if .Values.controllerManager.scope.watchResources }}
-  {{- range .Values.controllerManager.scope.watchResources }}
-  {{- $parts := splitList "." . }}
-  {{- $res := index $parts 0 }}
-  {{- if eq $res "" }}
-    {{- fail (printf "invalid controllerManager.scope.watchResources entry %q: resource segment cannot be empty" .) }}
+  {{- include "lifecycle-controller.resourceRules" $root | nindent 0 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: {{ ternary "RoleBinding" "ClusterRoleBinding" $namespaced }}
+metadata:
+  name: {{ include "lifecycle-controller.fullname" $root }}-manager-rolebinding
+  {{- if $namespaced }}
+  namespace: {{ . | quote }}
   {{- end }}
-  {{- $grp := "" }}
-  {{- if gt (len $parts) 1 }}
-    {{- $rest := rest $parts }}
-    {{- if has "" $rest }}
-      {{- fail (printf "invalid controllerManager.scope.watchResources entry %q: apiGroup segments cannot be empty" .) }}
-    {{- end }}
-    {{- $grp = join "." $rest }}
-  {{- end }}
-- apiGroups: ["{{ $grp }}"]
-  resources: ["{{ $res }}"]
-  verbs: ["delete", "get", "list", "patch", "update", "watch"]
-  {{- end }}
-{{- else }}
-- apiGroups: ["*"]
-  resources: ["*"]
-  verbs: ["delete", "get", "list", "patch", "update", "watch"]
+  labels:
+    {{- include "lifecycle-controller.labels" $root | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: {{ ternary "Role" "ClusterRole" $namespaced }}
+  name: {{ include "lifecycle-controller.fullname" $root }}-manager-role
+subjects:
+- kind: ServiceAccount
+  name: {{ include "lifecycle-controller.serviceAccountName" $root }}
+  namespace: {{ $root.Release.Namespace }}
 {{- end }}
-- apiGroups: [""]
-  resources: ["events"]
-  verbs: ["create", "patch"]
-- apiGroups: ["events.k8s.io"]
-  resources: ["events"]
-  verbs: ["create", "patch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: {{ include "lifecycle-controller.fullname" . }}-manager-rolebinding
-  labels:
-    {{- include "lifecycle-controller.labels" . | nindent 4 }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: {{ include "lifecycle-controller.fullname" . }}-manager-role
-subjects:
-- kind: ServiceAccount
-  name: {{ include "lifecycle-controller.serviceAccountName" . }}
-  namespace: {{ .Release.Namespace }}
----
-# Permissions for leader election
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: {{ include "lifecycle-controller.fullname" . }}-leader-election-role
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "lifecycle-controller.labels" . | nindent 4 }}
-rules:
-- apiGroups: [""]
-  resources: ["configmaps"]
-  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-- apiGroups: ["coordination.k8s.io"]
-  resources: ["leases"]
-  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-- apiGroups: [""]
-  resources: ["events"]
-  verbs: ["create", "patch"]
-- apiGroups: ["events.k8s.io"]
-  resources: ["events"]
-  verbs: ["create", "patch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: {{ include "lifecycle-controller.fullname" . }}-leader-election-rolebinding
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "lifecycle-controller.labels" . | nindent 4 }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: {{ include "lifecycle-controller.fullname" . }}-leader-election-role
-subjects:
-- kind: ServiceAccount
-  name: {{ include "lifecycle-controller.serviceAccountName" . }}
-  namespace: {{ .Release.Namespace }}
 {{- end -}}

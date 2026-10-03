@@ -180,8 +180,8 @@ Resource filters select which API types to watch. The controller reads, deletes,
 
 ### RBAC
 
-By default, the Helm chart grants `get`, `list`, `watch`, `patch`, `update`, and `delete` on all resources and API groups through a `ClusterRole`. The chart also grants Event writes and namespaced leader-election permissions.
+By default, the Helm chart watches standard workloads, ConfigMaps, Services, Ingresses, NetworkPolicies, PersistentVolumeClaims, HorizontalPodAutoscalers, PodDisruptionBudgets, Namespaces, and PersistentVolumes. It grants `get`, `list`, `watch`, `patch`, `update`, and `delete` for those resources, plus `Event` permissions and permissions for enabled leader-election and secure-metrics features.
 
-Set `controllerManager.scope.watchResources` to exact resource names to narrow the generated resource grants. These grants still apply across all namespaces. The `watchNamespaces`, `ignoreNamespaces`, and `ignoreResources` scope values do not reduce the generated RBAC permissions.
+A list of filtered namespaces creates a `Role` and `RoleBinding` in each watched namespace. Namespace patterns or leaving the list unset results in a `ClusterRole`. Namespace objects still require cluster permissions.
 
-The chart supports exact resource and group names or Kubernetes `*` wildcards in RBAC rules. It does not expand arbitrary globs. For example, `deployment?.apps` can match a resource in the controller but does not authorize access to `deployments.apps`. Use exact names for chart-generated RBAC, or supply RBAC yourself.
+For resource patterns such as `deploy*.apps`, set `rbac.create: false` and supply your own RBAC with explicit resource names.

@@ -54,7 +54,7 @@ spec:
             {{- end }}
             - --dry-run={{ .Values.controllerManager.dryRun }}
             - --zap-log-level={{ .Values.controllerManager.logLevel }}
-            {{- range .Values.controllerManager.scope.watchResources }}
+            {{- range (include "lifecycle-controller.watchResources" . | fromJsonArray) }}
             - --watch-resource={{ . }}
             {{- end }}
             {{- range .Values.controllerManager.scope.ignoreResources }}

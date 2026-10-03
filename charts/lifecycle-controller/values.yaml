@@ -18,7 +18,7 @@ serviceAccount:
   # If not set and create is true, a name is generated using the fullname template
   name: ""
 
-# Create the necessary ClusterRole, ClusterRoleBinding, Role, and RoleBinding
+# Create RBAC for the resource filters, namespace filters, and enabled features.
 rbac:
   create: true
 
@@ -63,7 +63,25 @@ controllerManager:
   # Defines which resources and namespaces the controller should watch.
   scope:
     # List of glob patterns for resources to watch (e.g. ["deployments.apps", "pods", "*.k8s.io"])
-    watchResources: []
+    # Set [] to watch all eligible resources with wildcard permissions.
+    # Namespace filters exclude non-namespaced resources, such as PersistentVolumes.
+    # Namespace objects are supported when included in watchResources.
+    watchResources:
+      - pods
+      - deployments.apps
+      - statefulsets.apps
+      - daemonsets.apps
+      - jobs.batch
+      - cronjobs.batch
+      - configmaps
+      - services
+      - ingresses.networking.k8s.io
+      - networkpolicies.networking.k8s.io
+      - persistentvolumeclaims
+      - horizontalpodautoscalers.autoscaling
+      - poddisruptionbudgets.policy
+      - namespaces
+      - persistentvolumes
     # List of glob patterns for resources to ignore
     ignoreResources: []
     # List of glob patterns for namespaces to watch (e.g. ["default", "dev-*"])
