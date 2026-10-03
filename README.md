@@ -117,8 +117,6 @@ In dry-run, relative and recurring schedules are logged without saving state or 
     - `delete-after` is a convenience annotation that is converted into `delete-at` by the controller.
     - `delete-at` (a specific, one-time event) takes highest priority.
 
-Deletion requests include the UID and resource version read by the controller. If the resource changes or is replaced before the request reaches the API server, the server rejects the request. The controller then retries and checks the current annotations.
-
 ### A Note on Relative Timers
 
 Annotations that use relative durations (`delete-after`, `restart-after`) start their from a configurable reference point. While the controller's processing of annotations is usually immediate, factors like high cluster load or controller downtime can introduce delays.
