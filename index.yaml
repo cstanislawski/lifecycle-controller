@@ -2,6 +2,27 @@ apiVersion: v1
 entries:
   lifecycle-controller:
   - apiVersion: v2
+    appVersion: v0.7.0
+    created: "2026-10-03T22:13:02.072655614Z"
+    description: A Kubernetes controller to manage the lifecycle of standard resources
+      through time-based annotations.
+    digest: f253e5282269d0f863265f0e1d70b61a5c876dbe8b4d8004ef78d59ffde8f1f0
+    home: https://github.com/cstanislawski/lifecycle-controller
+    keywords:
+    - kubernetes
+    - controller
+    - operator
+    - lifecycle
+    maintainers:
+    - name: cstanislawski
+    name: lifecycle-controller
+    sources:
+    - https://github.com/cstanislawski/lifecycle-controller
+    type: application
+    urls:
+    - https://github.com/cstanislawski/lifecycle-controller/releases/download/lifecycle-controller-0.7.0/lifecycle-controller-0.7.0.tgz
+    version: 0.7.0
+  - apiVersion: v2
     appVersion: v0.6.3
     created: "2026-10-03T16:55:19.611453396Z"
     description: A Kubernetes controller to manage the lifecycle of standard resources
@@ -358,4 +379,4 @@ entries:
     urls:
     - https://github.com/cstanislawski/lifecycle-controller/releases/download/lifecycle-controller-0.1.0/lifecycle-controller-0.1.0.tgz
     version: 0.1.0
-generated: "2026-10-03T16:55:19.611527447Z"
+generated: "2026-10-03T22:13:02.072779576Z"
