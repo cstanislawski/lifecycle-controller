@@ -255,7 +255,7 @@ func (r *LifecycleReconciler) handleDeletion(ctx context.Context, obj *unstructu
 				logger.Error(err, "failed to remove redundant delete-after annotation")
 				return ctrl.Result{}, err
 			}
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: time.Nanosecond}, nil
 		}
 
 		duration, err := parseExtendedDuration(deleteAfterStr)
@@ -287,7 +287,7 @@ func (r *LifecycleReconciler) handleDeletion(ctx context.Context, obj *unstructu
 			logger.Error(err, "failed to update object with delete-at annotation")
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{RequeueAfter: time.Nanosecond}, nil
 	}
 
 	if deleteAtStr := annotations[DeleteAtAnnotation]; deleteAtStr != "" {
@@ -353,7 +353,7 @@ func (r *LifecycleReconciler) handleRestart(ctx context.Context, obj *unstructur
 				logger.Error(err, "failed to remove redundant restart-after annotation")
 				return ctrl.Result{}, err
 			}
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: time.Nanosecond}, nil
 		}
 
 		duration, err := parseExtendedDuration(restartAfterStr)
@@ -384,7 +384,7 @@ func (r *LifecycleReconciler) handleRestart(ctx context.Context, obj *unstructur
 			logger.Error(err, "failed to update object with restart-at annotation")
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{RequeueAfter: time.Nanosecond}, nil
 	}
 
 	if restartAtStr := annotations[RestartAtAnnotation]; restartAtStr != "" {

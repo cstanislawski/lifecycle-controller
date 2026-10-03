@@ -223,13 +223,12 @@ ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 
 ## Tool Versions
-KUSTOMIZE_VERSION ?= v5.6.0
-CONTROLLER_TOOLS_VERSION ?= v0.18.0
-#ENVTEST_VERSION is the version of controller-runtime release branch to fetch the envtest setup script (i.e. release-0.20)
-ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime | awk -F'[v.]' '{printf "release-%d.%d", $$2, $$3}')
-#ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)
-ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'[v.]' '{printf "1.%d", $$3}')
-GOLANGCI_LINT_VERSION ?= v2.11.4
+KUSTOMIZE_VERSION ?= v5.8.2
+CONTROLLER_TOOLS_VERSION ?= v0.22.0
+# Use fixed versions for the envtest tool and Kubernetes binaries.
+ENVTEST_VERSION ?= v0.25.2
+ENVTEST_K8S_VERSION ?= 1.37.0
+GOLANGCI_LINT_VERSION ?= v2.14.0
 HELM_VERSION ?= $(shell cat charts/lifecycle-controller/.Version)
 HELM_CHART_PATH ?= charts/lifecycle-controller
 
@@ -271,7 +270,7 @@ set -e; \
 package=$(2)@$(3) ;\
 echo "Downloading $${package}" ;\
 rm -f $(1) ;\
-GOBIN=$(LOCALBIN) go install $${package} ;\
+GOTOOLCHAIN=$(shell go env GOVERSION) GOBIN=$(LOCALBIN) go install $${package} ;\
 mv $(1) $(1)-$(3) ;\
 } ;\
 ln -sf $$(realpath $(1)-$(3)) $(1)

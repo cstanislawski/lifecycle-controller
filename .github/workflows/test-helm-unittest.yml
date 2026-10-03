@@ -22,7 +22,7 @@ permissions: {}
 
 env:
   HELM_CHART_PATH: charts/lifecycle-controller
-  HELM_UNITTEST_VERSION: v1.1.1
+  HELM_UNITTEST_VERSION: v1.2.1
 
 jobs:
   helm-unittest:
