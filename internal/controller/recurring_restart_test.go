@@ -31,7 +31,7 @@ func TestRestartEveryValidationStopsPermanentRetries(t *testing.T) {
 		value     string
 		wantEvent string
 	}{
-		{name: "zero", value: "0s", wantEvent: "at least 1m0s"},
+		{name: "zero", value: "0s", wantEvent: "must be positive"},
 		{name: "negative", value: "-1m", wantEvent: "must be positive"},
 		{name: "below minimum", value: "59s", wantEvent: "at least 1m0s"},
 		{name: "overflowing days", value: "768614336404564651d", wantEvent: "too large"},

@@ -1,18 +1,50 @@
 # lifecycle-controller
 
-A Kubernetes controller to manage the lifecycle of any Kubernetes resource, namespaced or not, through simple, time-based annotations.
+A Kubernetes controller that schedules resource deletion and Pod template updates through time-based annotations. It supports namespaced and cluster-scoped resources that expose the required API operations.
 
-This controller allows you to automate common operational tasks such as cleaning up temporary resources or scheduling periodic application restarts without needing to create complex CronJobs or custom wrapper objects.
+Use it to schedule resource deletion or request application restarts without a separate CronJob or wrapper object. Pod replacement depends on the workload's update behavior. See [Restart mechanism](#restart-mechanism).
 
-## Example Use Cases
+## Quick start
 
-Here are a few scenarios where `lifecycle-controller` can simplify your workflow.
+This example uses a Deployment named `example-app` in `default` namespace, without existing lifecycle action annotations. Actions are limited to Deployments in `default` namespace.
 
-### Temporary Development Environments
+```sh
+helm repo add lifecycle-controller https://cstanislawski.github.io/lifecycle-controller
+helm repo update
+helm install lifecycle-controller lifecycle-controller/lifecycle-controller \
+  --namespace lifecycle-controller \
+  --create-namespace \
+  --set 'controllerManager.scope.watchResources[0]=deployments.apps' \
+  --set 'controllerManager.scope.watchNamespaces[0]=default'
+kubectl rollout status deployment/lifecycle-controller -n lifecycle-controller
+```
 
-Scenario: A developer spins up resources for a feature branch. To prevent cluttering the cluster, these resources should be automatically deleted after 3 days.
+Preview a restart after one minute:
 
-Solution: Apply a `delete-after` annotation to the resources.
+```sh
+kubectl annotate deployment example-app -n default \
+  lifecycle.cezary.dev/dry-run="true" \
+  lifecycle.cezary.dev/restart-after="1m" --overwrite
+kubectl logs deployment/lifecycle-controller -n lifecycle-controller --since=5m
+kubectl get events -n default \
+  --field-selector involvedObject.kind=Deployment,involvedObject.name=example-app \
+  --sort-by=.lastTimestamp
+```
+
+Check for the planned `restart-after` conversion in the logs and a `DryRunRestart` Event. Enable the action:
+
+```sh
+kubectl annotate deployment example-app -n default \
+  lifecycle.cezary.dev/dry-run="false" --overwrite
+```
+
+The controller then converts `restart-after` to `restart-at`. After the scheduled restart time, check for a `RestartTriggered` Event and the Pod template's `lifecycle.cezary.dev/restartedAt` annotation. Use `kubectl rollout status deployment/example-app -n default` to check the workload after the template update.
+
+## Example use cases
+
+### Temporary development environments
+
+To delete feature-branch resources after three days, apply a `delete-after` annotation to each resource.
 
 ```yaml
 apiVersion: apps/v1
@@ -26,11 +58,9 @@ spec:
   # ...
 ```
 
-### Nightly Application Restarts
+### Nightly application restarts
 
-Scenario: A legacy application has a slow memory leak. To ensure stability, the operations team wants to restart it every night at 3:00 AM in their local timezone.
-
-Solution: Use the `restart-cron` and `cron-timezone` annotations.
+To request a restart each day at 03:00 in a local timezone, use `restart-cron` and `cron-timezone`.
 
 ```yaml
 apiVersion: apps/v1
@@ -45,156 +75,113 @@ spec:
   # ...
 ```
 
-### One-Off Scheduled Maintenance
+### One-off scheduled maintenance
 
-Scenario: A database migration is scheduled for Saturday at 2:00 AM UTC. The application pods need to be restarted immediately after to pick up the new schema. This can be scheduled in advance.
-
-Solution: Use the `restart-at` annotation with a specific timestamp.
+Use `restart-at` for a fixed restart time. For a restart after a database migration, use a workflow that waits for migration completion before applying the annotation.
 
 ```yaml
 apiVersion: apps/v1
-kind: StatefulSet
+kind: Deployment
 metadata:
-  name: database
+  name: application
   namespace: production
   annotations:
-    lifecycle.cezary.dev/restart-at: "2025-10-25T02:00:00Z"
+    lifecycle.cezary.dev/restart-at: "2026-10-10T03:00:00Z"
 spec:
   # ...
 ```
 
-## Annotation API Reference
+## Annotation API reference
 
-The controller's behavior is configured entirely through annotations.
-
-- **For all resources:**
-  - `lifecycle.cezary.dev/reference-point`: (string) Specifies the starting point for relative duration timers (for `-after` annotations).
-    - `applyTimestamp` (default): The timer starts when the controller processes the `-after` annotation. Re-applying the manifest resets the timer ("keep-alive" behavior).
-    - `creationTimestamp`: The timer starts from the resource's creation time. This creates a fixed TTL that is not affected by subsequent updates.
-  - `lifecycle.cezary.dev/delete-at`: Absolute TTL. The controller deletes the resource at or after this specific date and time (e.g., `2024-12-31T23:59:59Z`).
+- For all watched resources:
+  - `lifecycle.cezary.dev/reference-point` (string) - specifies the starting point for relative duration timers (for `-after` annotations).
+    - `applyTimestamp` (default) - the timer starts when the controller processes the `-after` annotation. Re-applying the manifest resets the timer ("keep-alive" behavior).
+    - `creationTimestamp` - the timer starts from the resource's creation time. This creates a fixed TTL that is not affected by subsequent updates.
+  - `lifecycle.cezary.dev/delete-at` - absolute TTL. The controller deletes the resource at or after this specific date and time (e.g., `2024-12-31T23:59:59Z`).
     - The value must be an RFC3339 timestamp with explicit timezone offset (`Z` or `±hh:mm`).
     - This can be applied directly to a `Namespace` to trigger its deletion. Kubernetes will handle the subsequent removal of all resources within that namespace.
-  - `lifecycle.cezary.dev/delete-after`: Relative TTL (e.g., `5m`, `1h`, `3d`). The controller processes this annotation by calculating an absolute deletion time based on the time it first notices the annotation. It then adds a `lifecycle.cezary.dev/delete-at` annotation to the resource with this calculated time. To prevent re-calculation and make the state explicit, the original `lifecycle.cezary.dev/delete-after` annotation is then removed. **Supports `s`, `m`, `h`, and `d` (days).**
-  - `lifecycle.cezary.dev/dry-run`: Enables dry-run for a resource. Accepts standard boolean values such as `true`, `false`, `1`, and `0`. Invalid values create a warning Event and no action is taken.
-  - `lifecycle.cezary.dev/managed-by: "lifecycle-controller"`: Added by the controller when it mutates a resource, such as converting `*-after` annotations to `*-at` annotations, maintaining restart schedule state, or triggering a restart.
+  - `lifecycle.cezary.dev/delete-after` - relative TTL (e.g., `5m`, `1h`, `3d`). The controller calculates a deletion time from the selected reference point, saves it as `lifecycle.cezary.dev/delete-at`, and removes `delete-after`.
+  - `lifecycle.cezary.dev/dry-run` - enables dry-run for a resource. Accepts standard boolean values such as `true`, `false`, `1`, and `0`. Invalid values create a warning Event and no action is taken.
+  - `lifecycle.cezary.dev/managed-by: "lifecycle-controller"` - added by the controller when it mutates a resource, such as converting `*-after` annotations to `*-at` annotations, maintaining restart schedule state, or triggering a restart.
 
-- **Only for pod-spawning resources (Deployments, StatefulSets, DaemonSets, etc.):**
-  - `lifecycle.cezary.dev/restart-at`: Performs a one-time rolling restart at a specific date and time.
+- For watched resources with a `spec.template` field:
+  - `lifecycle.cezary.dev/restart-at` - requests one Pod template update at or after a specific date and time.
     - The value must be an RFC3339 timestamp with explicit timezone offset (`Z` or `±hh:mm`).
-  - `lifecycle.cezary.dev/restart-after`: Performs a one-time rolling restart after a relative duration (e.g., `1h`). The controller converts this to an absolute `restart-at` annotation. Supports `s`, `m`, `h`, and `d` (days).
-  - `lifecycle.cezary.dev/restart-every`: Performs a rolling restart on a recurring, relative basis (e.g., `7d` to restart weekly). Supports `s`, `m`, `h`, and `d` (days), with a minimum duration of `1m`.
-  - `lifecycle.cezary.dev/restart-cron`: Performs a rolling restart based on a standard five-field, minute-resolution cron expression (e.g., `"0 3 * * *"` for daily at 3 AM).
-  - `lifecycle.cezary.dev/cron-timezone`: Optional timezone for `restart-cron` only. Must be valid IANA timezone (e.g., `America/New_York`). Defaults to `UTC`.
-  - A resource is considered pod-spawning if it has a `spec.template.metadata.annotations` field. The restart mechanism works by patching this field, which is the standard Kubernetes pattern for triggering a rolling update.
+  - `lifecycle.cezary.dev/restart-after` - requests one Pod template update after a relative duration (e.g., `1h`). The controller converts this to an absolute `restart-at` annotation.
+  - `lifecycle.cezary.dev/restart-every` - requests recurring Pod template updates at a relative interval (e.g., `7d` for weekly updates), with a minimum duration of `1m`.
+  - `lifecycle.cezary.dev/restart-cron` - requests recurring Pod template updates based on a standard five-field, minute-resolution cron expression (e.g., `"0 3 * * *"` for daily at 03:00).
+  - `lifecycle.cezary.dev/cron-timezone` - optional timezone for `restart-cron` only. Must be valid IANA timezone (e.g., `America/New_York`). Defaults to `UTC`.
+  - The controller checks for `spec.template`. Template annotations do not need to exist before the restart request. This field check does not guarantee that the API accepts the patch or that the workload replaces existing Pods.
 
-- **Restart Mechanism**
-  - **Triggering a Restart** - To initiate a rolling restart, the controller injects a `lifecycle.cezary.dev/restartedAt: "<timestamp>"` annotation into the resource's`spec.template.metadata.annotations`. This is the standard mechanism that causes Kubernetes to detect a change in the pod template and trigger a rollout.
-    - The same pod template mutation also adds `lifecycle.cezary.dev/managed-by: "lifecycle-controller"` to `spec.template.metadata.annotations`.
-  - **State Tracking for Recurring Restarts** - For `restart-every` and `restart-cron` schedules, the controller maintains its state using a top-level `lifecycle.cezary.dev/last-restart-timestamp: "<timestamp>"` annotation on the resource. This timestamp serves as the anchor for calculating the next restart, ensuring the schedule remains stable over time.
-    - **Initialization** - If the `last-restart-timestamp` annotation is missing on a resource with a recurring restart schedule, the controller adds it and sets its value to the current time. This bootstraps the schedule.
-    - **Reconciliation Logic** - On each check, the controller performs the following steps:
-      - Reads the schedule (`restart-every` or `restart-cron`) and the `last-restart-timestamp`,
-      - Calculates the `nextScheduledRestart` time based on the last one,
-      - Compares the current time to the `nextScheduledRestart` time,
-      - If the current time is at or after `nextScheduledRestart`, the controller triggers one restart,
-      - If more than one restart was missed, the controller triggers only one, updates `lifecycle.cezary.dev/last-restart-timestamp`, and schedules the next restart.
-  - **Cleanup** - After a one-time `restart-at` action is successfully triggered, the controller will remove the original `lifecycle.cezary.dev/restart-at` annotation to ensure the action is idempotent.
+### Relative duration format
 
-**Dry-run**
-Dry-run logs planned actions without changing resources. Enable it globally with `--dry-run` or Helm `controllerManager.dryRun`, or per resource with `lifecycle.cezary.dev/dry-run`.
+`delete-after`, `restart-after`, and `restart-every` require exactly one positive integer and unit, without signs or spaces. Valid units are `s`, `m`, `h`, and `d`. Values such as `1d`, `25h`, and `90m` are valid.
+
+Zero, compound values (e.g., `1d2h`), arithmetic expressions (e.g., `1d-25h`), decimal values (e.g., `1.5h`), and values that exceed the Go duration limit are invalid. If the selected action has an invalid duration, the controller records an `InvalidAnnotation` warning Event and leaves the resource unchanged.
+
+## Controller behavior
+
+### Relative timers
+
+Relative timers (`delete-after`, `restart-after`) start from the selected reference point. By default, `applyTimestamp` means the time when the controller processes the annotation, not the time when a client applies the manifest. Cluster load or controller downtime can delay processing.
+
+Re-applying a manifest that restores the `-after` annotation resets the derived `-at` deadline when the controller processes it. This is the default "keep-alive" behavior.
+
+Use `lifecycle.cezary.dev/reference-point: "creationTimestamp"` to calculate the deadline from `metadata.creationTimestamp`. Re-applying `-after` does not reset an existing `-at` deadline with this reference point.
+
+Use `delete-at` or `restart-at` for a fixed timestamp, or `restart-cron` for a recurring calendar schedule. Actions can run after their scheduled time. These annotations do not guarantee exact-time execution or completion.
+
+### Precedence
+
+If a resource mixes `restart-*` and `delete-*` action annotations, the controller records a warning Event and takes no action.
+
+Within one action family, the controller processes a non-empty `delete-after` or `restart-after` before the corresponding `-at` annotation:
+
+| Reference point | When both `-after` and `-at` are present |
+| --- | --- |
+| `applyTimestamp` (default) | Convert `-after` to a new `-at` value, replacing the existing deadline. |
+| `creationTimestamp` | Keep the existing `-at` value and remove `-after`. |
+
+After conversion, restart priority is `restart-at`, then `restart-cron`, then `restart-every`. For deletion, the controller acts on `delete-at`.
+
+### Restart mechanism
+
+Deployments and StatefulSets or DaemonSets with `RollingUpdate` can replace Pods after a template change. StatefulSets and DaemonSets with `OnDelete`, and ReplicaSets, do not automatically replace existing Pods for this change. Paused Deployments and StatefulSet partitions can also prevent or limit Pod replacement. The controller does not wait for a rollout to complete.
+
+- Triggering a restart - the controller writes `lifecycle.cezary.dev/restartedAt: "<timestamp>"` into the resource's `spec.template.metadata.annotations`. The workload controller determines how to apply the changed template.
+  - The same pod template mutation also adds `lifecycle.cezary.dev/managed-by: "lifecycle-controller"` to `spec.template.metadata.annotations`.
+- State tracking for recurring restarts - for `restart-every` and `restart-cron` schedules, the controller uses a top-level `lifecycle.cezary.dev/last-restart-timestamp: "<timestamp>"` annotation as the anchor for calculating the next restart.
+  - Initialization - if `last-restart-timestamp` is missing, the controller sets it to the current time.
+  - Reconciliation - the controller calculates the next occurrence from the schedule and timestamp. When due, it updates the Pod template and timestamp, then schedules the next occurrence. Missed occurrences produce only one template update.
+- Cleanup - the restart patch also removes the one-time `restart-at` annotation or updates recurring schedule state. This acknowledges the template update, not rollout completion.
+
+### Dry-run
+
+Dry-run logs planned actions without changing resources. Enable it globally with the `--dry-run` flag or the `controllerManager.dryRun` Helm value, or per resource with the `lifecycle.cezary.dev/dry-run` annotation.
 
 In dry-run, relative and recurring schedules are logged without saving state or immediately requeueing the same occurrence.
 
-- **Precedence:**
-  - **Conflicting action types** - If a resource mixes annotations from different action families (any combination of `restart-*` and `delete-*`), the controller treats it as a misconfiguration. It will post a warning `Event` on the resource and take no action.
-  - **Multiple annotations of one family** - If more than one annotation of the same family is present on a resource, the controller applies the most specific one ("most specific wins").
-  - **In case of restarts**
-    - `restart-after` is a convenience annotation that is converted into `restart-at` by the controller.
-    - `restart-at` (a specific, one-time event) takes highest priority.
-    - `restart-cron` (a specific, recurring schedule) is next.
-    - `restart-every` (a relative interval) has the lowest priority.
-  - **In case of deletes**
-    - `delete-after` is a convenience annotation that is converted into `delete-at` by the controller.
-    - `delete-at` (a specific, one-time event) takes highest priority.
+## Scope and permissions
 
-### A Note on Relative Timers
+### Configuration flags
 
-Annotations that use relative durations (`delete-after`, `restart-after`) start their from a configurable reference point. While the controller's processing of annotations is usually immediate, factors like high cluster load or controller downtime can introduce delays.
+By default, the controller discovers resources across all namespaces and watches those that support `get`, `list`, `watch`, `patch`, and `delete`. It skips subresources and APIs that lack these verbs. An explicit watch pattern that selects an unsupported API causes a discovery error unless an ignore rule excludes that API.
 
-By default, the timer starts from the `applyTimestamp`. This means the timer begins when the controller processes the annotation on the resource.
+Resource filters select which API types to watch. Namespace filters limit which objects the controller acts on, but the cache still reads across all namespaces. Namespace filters do not provide tenant isolation.
 
-Crucially, the timer will be reset every time you re-apply the manifest containing the `-after` annotation. The controller treats each `apply` as a new declaration of intent and recalculates the absolute `-at` timestamp based on the current time. This "keep-alive" behavior is the default and is very useful for development environments where resources should persist as long as they are actively being worked on.
+- `--watch-resource` (repeatable) - glob pattern for resources to watch.
+  - Format - `<resource>.<group>` for grouped APIs (e.g., `deployments.apps`) or `<resource>` for core APIs (e.g., `pods`).
+  - If not provided, all eligible resources are watched unless excluded by ignore rules. Literal `*.*` is not equivalent to this default: it does not match core keys such as `pods`.
+  - Broad patterns can select APIs that lack the required verbs. Prefer exact resource names.
+- `--ignore-resource` (repeatable) - glob pattern for resources to strictly ignore. Takes precedence over watch rules.
+- `--watch-namespace` (repeatable) - glob pattern for namespaces to watch (e.g. `default`, `dev-*`).
+  - If provided, the controller acts only on objects in matching namespaces. It excludes other cluster-scoped objects, except watched `Namespace` objects whose names match the pattern.
+- `--ignore-namespace` (repeatable) - glob pattern for namespaces to strictly ignore. Takes precedence over watch rules.
 
-To set a fixed lifetime that is not reset on subsequent updates, you can change the reference point. By adding the annotation `lifecycle.cezary.dev/reference-point: "creationTimestamp"`, you instruct the controller to start the timer from the moment the resource was created (`metadata.creationTimestamp`). This creates a strict, fixed TTL that is ideal for CI preview environments or automated test resources that must be cleaned up after a set period, regardless of any updates.
+### RBAC
 
-For time-critical operations or to set a fixed expiration that does not change on subsequent applies, it is recommended to use the absolute time annotations (`delete-at`, `restart-at`, `restart-cron`). These define a specific, unambiguous point in time for the action to occur, making them more reliable for scheduled maintenance or cleanup.
+By default, the Helm chart grants `get`, `list`, `watch`, `patch`, `update`, and `delete` on all resources and API groups through a `ClusterRole`. The chart also grants Event writes and namespaced leader-election permissions.
 
-## Scope & Permissions
+Set `controllerManager.scope.watchResources` to exact resource names to narrow the generated resource grants. These grants still apply across all namespaces. The `watchNamespaces`, `ignoreNamespaces`, and `ignoreResources` scope values do not reduce the generated RBAC permissions.
 
-By default, the controller discovers and watches **all** available resources (`*.*`) across **all** namespaces. In production or multi-tenant environments, you may want to restrict this scope to improve security and performance.
-
-The controller supports glob-style patterns for filtering resources and namespaces via command-line flags (or Helm values).
-
-### Configuration Flags
-
-- `--watch-resource` - (Repeatable) Glob pattern for resources to watch.
-  - Format: `<resource>.<group>` (e.g. `deployments.apps`, `pods`, `*.k8s.io`).
-  - If not provided, all resources are watched (unless excluded by ignore rules).
-- `--ignore-resource` - (Repeatable) Glob pattern for resources to strictly ignore. Takes precedence over watch rules.
-- `--watch-namespace` - (Repeatable) Glob pattern for namespaces to watch (e.g. `default`, `dev-*`).
-  - Strict Scoping: If provided, the controller will **only** watch resources inside matching namespaces. It will **automatically exclude** cluster-scoped resources (like `Nodes`) with the exception of `Namespace` objects themselves, provided their name matches the pattern.
-- `--ignore-namespace` - (Repeatable) Glob pattern for namespaces to strictly ignore. Takes precedence over watch rules.
-
-### Examples
-
-Watch only deployments in `dev-*` namespaces:
-
-```bash
---watch-resource=deployments.apps --watch-namespace=dev-*
-```
-
-Watch everything except secrets and anything in `kube-system`:
-
-```bash
---ignore-resource=secrets --ignore-namespace=kube-system
-```
-
-## Deployment
-
-`lifecycle-controller` is both as:
-
-- A standalone container that you can configure to run in your own environment
-- A Helm chart for easy deployment into a Kubernetes cluster
-
-### A Note on Permissions (RBAC)
-
-By default, the controller generates a `ClusterRole` with wildcard (`*`) permissions for `resources` and `apiGroups`. This allows it to dynamically discover and manage any resource type.
-
-When installing via Helm, if you configure the `scope.watchResources` value, the chart will automatically restrict the generated `ClusterRole` to only contain permissions for those specific resources. This ensures the controller operates with the Principle of Least Privilege.
-
-If you are running the binary manually or managing RBAC yourself, you should ensure your `ClusterRole` permissions match the resources you intend to manage.
-
-### Installation with Helm
-
-You can install the controller directly from the Helm repository:
-
-```sh
-helm repo add lifecycle-controller https://cstanislawski.github.io/lifecycle-controller
-helm repo update
-helm install lifecycle-controller lifecycle-controller/lifecycle-controller \
-  --namespace lifecycle-controller \
-  --create-namespace
-```
-
-To configure scoping via Helm (which also tightens RBAC):
-
-```yaml
-controllerManager:
-  scope:
-    watchResources:
-      - "deployments.apps"
-      - "statefulsets.apps"
-    watchNamespaces:
-      - "default"
-      - "dev-*"
-```
+The chart supports exact resource and group names or Kubernetes `*` wildcards in RBAC rules. It does not expand arbitrary globs. For example, `deployment?.apps` can match a resource in the controller but does not authorize access to `deployments.apps`. Use exact names for chart-generated RBAC, or supply RBAC yourself.
