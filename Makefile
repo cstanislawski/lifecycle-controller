@@ -100,10 +100,20 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	$(MAKE) cleanup KIND_CLUSTER=$(E2E_KIND_CLUSTER)
 
-.PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests.
-	KIND=$(KIND) KIND_CLUSTER=$(E2E_KIND_CLUSTER) IMG=$(IMG) NAMESPACE=$(NAMESPACE) go test -tags=e2e ./test/e2e/ -v
+# Use the named test cluster for setup, tests, and cleanup.
+define run-e2e
+	@set -e; KUBECONFIG=$$(mktemp); export KUBECONFIG; \
+	trap 'rm -f "$$KUBECONFIG"' EXIT; \
+	unset HELM_KUBECONTEXT HELM_KUBEAPISERVER; \
+	$(MAKE) setup-test-e2e; \
+	$(KIND) get kubeconfig --name $(E2E_KIND_CLUSTER) > "$$KUBECONFIG"; \
+	KIND=$(KIND) KIND_CLUSTER=$(E2E_KIND_CLUSTER) IMG=$(IMG) NAMESPACE=$(NAMESPACE) go test -tags=$(1) ./test/$(2)/ -v; \
 	$(MAKE) cleanup-test-e2e
+endef
+
+.PHONY: test-e2e
+test-e2e: manifests generate fmt vet ## Run the e2e tests.
+	$(call run-e2e,e2e,e2e)
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
@@ -299,6 +309,5 @@ undeploy-helm: ## Undeploy controller using Helm.
 	$(HELM) uninstall lifecycle-controller --namespace $(NAMESPACE) --ignore-not-found
 
 .PHONY: test-e2e-helm
-test-e2e-helm: setup-test-e2e manifests generate fmt vet ## Run the Helm e2e tests.
-	KIND=$(KIND) KIND_CLUSTER=$(E2E_KIND_CLUSTER) IMG=$(IMG) go test -tags=e2e_helm ./test/e2e-helm/ -v
-	$(MAKE) cleanup-test-e2e
+test-e2e-helm: manifests generate fmt vet ## Run the Helm e2e tests.
+	$(call run-e2e,e2e_helm,e2e-helm)
