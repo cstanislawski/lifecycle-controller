@@ -1,90 +1,91 @@
-suite: RBAC watchResources parsing
+suite: RBAC configuration
 templates:
   - templates/rbac.yaml
+  - templates/deployment.yaml
+  - templates/leader-election-rbac.yaml
+  - templates/metrics-rbac.yaml
+  - templates/namespace-rbac.yaml
 
 tests:
-  - it: renders core resource with empty apiGroup
+  - it: limits default grants to standard resources
+    template: templates/rbac.yaml
+    documentSelector: {path: kind, value: ClusterRole}
+    asserts:
+      - equal:
+          path: rules
+          value:
+            - {apiGroups: [""], resources: [pods], verbs: [delete, get, list, patch, update, watch]}
+            - {apiGroups: [apps], resources: [deployments], verbs: [delete, get, list, patch, update, watch]}
+            - {apiGroups: [apps], resources: [statefulsets], verbs: [delete, get, list, patch, update, watch]}
+            - {apiGroups: [apps], resources: [daemonsets], verbs: [delete, get, list, patch, update, watch]}
+            - {apiGroups: [batch], resources: [jobs], verbs: [delete, get, list, patch, update, watch]}
+            - {apiGroups: [batch], resources: [cronjobs], verbs: [delete, get, list, patch, update, watch]}
+            - {apiGroups: [""], resources: [configmaps], verbs: [delete, get, list, patch, update, watch]}
+            - {apiGroups: [""], resources: [services], verbs: [delete, get, list, patch, update, watch]}
+            - {apiGroups: [networking.k8s.io], resources: [ingresses], verbs: [delete, get, list, patch, update, watch]}
+            - {apiGroups: [networking.k8s.io], resources: [networkpolicies], verbs: [delete, get, list, patch, update, watch]}
+            - {apiGroups: [""], resources: [persistentvolumeclaims], verbs: [delete, get, list, patch, update, watch]}
+            - {apiGroups: [autoscaling], resources: [horizontalpodautoscalers], verbs: [delete, get, list, patch, update, watch]}
+            - {apiGroups: [policy], resources: [poddisruptionbudgets], verbs: [delete, get, list, patch, update, watch]}
+            - {apiGroups: [""], resources: [namespaces], verbs: [delete, get, list, patch, update, watch]}
+            - {apiGroups: [""], resources: [persistentvolumes], verbs: [delete, get, list, patch, update, watch]}
+            - {apiGroups: [""], resources: [events], verbs: [create, patch]}
+            - {apiGroups: [events.k8s.io], resources: [events], verbs: [create, patch]}
+  - it: watches the default resources
+    template: templates/deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].args
+          value:
+            - --health-probe-bind-address=:8081
+            - --leader-elect
+            - --leader-election-id=RELEASE-NAME-lifecycle-controller
+            - --metrics-bind-address=:8443
+            - --metrics-secure=true
+            - --dry-run=false
+            - --zap-log-level=info
+            - --watch-resource=pods
+            - --watch-resource=deployments.apps
+            - --watch-resource=statefulsets.apps
+            - --watch-resource=daemonsets.apps
+            - --watch-resource=jobs.batch
+            - --watch-resource=cronjobs.batch
+            - --watch-resource=configmaps
+            - --watch-resource=services
+            - --watch-resource=ingresses.networking.k8s.io
+            - --watch-resource=networkpolicies.networking.k8s.io
+            - --watch-resource=persistentvolumeclaims
+            - --watch-resource=horizontalpodautoscalers.autoscaling
+            - --watch-resource=poddisruptionbudgets.policy
+            - --watch-resource=namespaces
+            - --watch-resource=persistentvolumes
+
+  - it: replaces default grants with core and grouped resources plus Events
+    template: templates/rbac.yaml
     set:
       controllerManager:
         scope:
           watchResources:
             - configmaps
-    documentSelector:
-      path: kind
-      value: ClusterRole
-    asserts:
-      - equal:
-          path: rules[0].apiGroups[0]
-          value: ""
-      - equal:
-          path: rules[0].resources[0]
-          value: configmaps
-      - equal:
-          path: rules[0].verbs
-          value: ["delete", "get", "list", "patch", "update", "watch"]
-
-  - it: renders single-segment apiGroup
-    set:
-      controllerManager:
-        scope:
-          watchResources:
             - deployments.apps
-    documentSelector:
-      path: kind
-      value: ClusterRole
-    asserts:
-      - equal:
-          path: rules[0].apiGroups[0]
-          value: apps
-      - equal:
-          path: rules[0].resources[0]
-          value: deployments
-
-  - it: renders dotted apiGroup fully
-    set:
-      controllerManager:
-        scope:
-          watchResources:
             - ingresses.networking.k8s.io
     documentSelector:
       path: kind
       value: ClusterRole
     asserts:
       - equal:
-          path: rules[0].apiGroups[0]
-          value: networking.k8s.io
-      - equal:
-          path: rules[0].resources[0]
-          value: ingresses
-
-  - it: renders one watch rule per entry
-    set:
-      controllerManager:
-        scope:
-          watchResources:
-            - configmaps
-            - ingresses.networking.k8s.io
-    documentSelector:
-      path: kind
-      value: ClusterRole
-    asserts:
-      - equal:
-          path: rules[0].apiGroups[0]
-          value: ""
-      - equal:
-          path: rules[0].resources[0]
-          value: configmaps
-      - equal:
-          path: rules[1].apiGroups[0]
-          value: networking.k8s.io
-      - equal:
-          path: rules[1].resources[0]
-          value: ingresses
-      - equal:
-          path: rules[2].resources[0]
-          value: events
+          path: rules
+          value:
+            - {apiGroups: [""], resources: [configmaps], verbs: [delete, get, list, patch, update, watch]}
+            - {apiGroups: [apps], resources: [deployments], verbs: [delete, get, list, patch, update, watch]}
+            - {apiGroups: [networking.k8s.io], resources: [ingresses], verbs: [delete, get, list, patch, update, watch]}
+            - {apiGroups: [""], resources: [events], verbs: [create, patch]}
+            - {apiGroups: [events.k8s.io], resources: [events], verbs: [create, patch]}
 
   - it: keeps wildcard rule when watchResources empty
+    template: templates/rbac.yaml
+    set:
+      controllerManager.scope.watchResources: []
     documentSelector:
       path: kind
       value: ClusterRole
@@ -96,22 +97,23 @@ tests:
           path: rules[0].resources[0]
           value: "*"
 
-  - it: grants structured event permissions
-    documentSelector:
-      path: kind
-      value: ClusterRole
+  - it: rejects a resource list supplied as a string
+    template: templates/rbac.yaml
+    set:
+      controllerManager.scope.watchResources: pods
     asserts:
-      - equal:
-          path: rules[2].apiGroups[0]
-          value: events.k8s.io
-      - equal:
-          path: rules[2].resources[0]
-          value: events
-      - equal:
-          path: rules[2].verbs
-          value: ["create", "patch"]
+      - failedTemplate: {errorPattern: watchResources must be a list}
+
+  - it: rejects a namespace filter that excludes every selected resource
+    template: templates/rbac.yaml
+    set:
+      controllerManager.scope.watchResources: [persistentvolumes]
+      controllerManager.scope.watchNamespaces: [team-a]
+    asserts:
+      - failedTemplate: {errorPattern: leaving no resources to watch}
 
   - it: fails on malformed value with empty resource segment
+    template: templates/rbac.yaml
     set:
       controllerManager:
         scope:
@@ -122,6 +124,7 @@ tests:
           errorPattern: "invalid controllerManager.scope.watchResources entry"
 
   - it: fails on malformed value with empty apiGroup segment
+    template: templates/rbac.yaml
     set:
       controllerManager:
         scope:
@@ -130,3 +133,268 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: "invalid controllerManager.scope.watchResources entry"
+
+  - it: grants access only in the selected namespaces
+    template: templates/rbac.yaml
+    set:
+      controllerManager.scope.watchNamespaces: [team-a, team-b]
+    asserts:
+      - hasDocuments: {count: 4}
+      - isKind: {of: Role}
+        documentIndex: 0
+      - equal: {path: metadata.namespace, value: team-a}
+        documentIndex: 0
+      - lengthEqual: {path: rules, count: 15}
+        documentIndex: 0
+      - equal: {path: "rules[1].resources", value: [deployments]}
+        documentIndex: 0
+      - equal: {path: "rules[13].resources", value: [events]}
+        documentIndex: 0
+      - isKind: {of: RoleBinding}
+        documentIndex: 1
+      - equal: {path: roleRef.kind, value: Role}
+        documentIndex: 1
+      - equal: {path: "subjects[0].namespace", value: NAMESPACE}
+        documentIndex: 1
+      - isKind: {of: Role}
+        documentIndex: 2
+      - equal: {path: metadata.namespace, value: team-b}
+        documentIndex: 2
+      - isKind: {of: RoleBinding}
+        documentIndex: 3
+  - it: removes ignored namespaces and duplicates
+    template: templates/rbac.yaml
+    set:
+      controllerManager.scope.watchNamespaces: [team-a, team-b, team-a]
+      controllerManager.scope.ignoreNamespaces: [team-b]
+    asserts:
+      - hasDocuments: {count: 2}
+      - equal: {path: metadata.namespace, value: team-a}
+        documentIndex: 0
+      - equal: {path: metadata.namespace, value: team-a}
+        documentIndex: 1
+  - it: removes ignored resource grants
+    template: templates/rbac.yaml
+    set:
+      controllerManager.scope.watchResources: [configmaps, secrets, configmaps]
+      controllerManager.scope.ignoreResources: [secrets]
+    documentSelector: {path: kind, value: ClusterRole}
+    asserts:
+      - lengthEqual: {path: rules, count: 3}
+      - equal: {path: "rules[0].resources", value: [configmaps]}
+  - it: grants only event writes when all resource entries are ignored
+    template: templates/rbac.yaml
+    set:
+      controllerManager.scope.watchResources: [configmaps]
+      controllerManager.scope.ignoreResources: [configmaps]
+    documentSelector: {path: kind, value: ClusterRole}
+    asserts:
+      - lengthEqual: {path: rules, count: 2}
+      - equal: {path: "rules[0].resources", value: [events]}
+  - it: selects cluster RBAC automatically for namespace patterns
+    template: templates/rbac.yaml
+    set:
+      controllerManager.scope.watchNamespaces: [dev-*]
+    asserts:
+      - isKind: {of: ClusterRole}
+        documentIndex: 0
+  - it: rejects an empty effective namespace list
+    template: templates/rbac.yaml
+    set:
+      controllerManager.scope.watchNamespaces: [team-a]
+      controllerManager.scope.ignoreNamespaces: [team-a]
+    asserts:
+      - failedTemplate: {errorPattern: at least one namespace after ignore rules}
+  - it: rejects ignore namespace patterns for generated namespaced RBAC
+    template: templates/rbac.yaml
+    set:
+      controllerManager.scope.watchNamespaces: [team-a]
+      controllerManager.scope.ignoreNamespaces: [dev-*]
+    asserts:
+      - failedTemplate: {errorPattern: generated namespaced RBAC requires exact namespace names}
+  - it: permits ignore namespace patterns with supplied RBAC
+    template: templates/deployment.yaml
+    set:
+      rbac.create: false
+      controllerManager.scope.watchNamespaces: [team-a]
+      controllerManager.scope.ignoreNamespaces: [dev-*]
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --ignore-namespace=dev-*
+  - it: keeps Namespaces but excludes PersistentVolumes with namespace filters
+    template: templates/deployment.yaml
+    set:
+      controllerManager.scope.watchNamespaces: [team-a]
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --watch-namespace=team-a
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --watch-resource=pods
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --watch-resource=namespaces
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --watch-resource=persistentvolumes
+  - it: rejects resource globs that RBAC cannot express
+    template: templates/rbac.yaml
+    set:
+      controllerManager.scope.watchResources: ["deployment?.apps"]
+    asserts:
+      - failedTemplate: {errorPattern: chart-generated RBAC requires exact names}
+  - it: rejects ignore resource globs for generated RBAC
+    template: templates/rbac.yaml
+    set:
+      controllerManager.scope.ignoreResources: [secr*]
+    asserts:
+      - failedTemplate: {errorPattern: chart-generated RBAC requires exact ignoreResources}
+  - it: rejects resource patterns with dotted group suffixes
+    template: templates/rbac.yaml
+    set:
+      controllerManager.scope.watchResources: ["*.k8s.io"]
+    asserts:
+      - failedTemplate: {errorPattern: chart-generated RBAC requires exact names}
+  - it: permits resource globs with supplied RBAC
+    template: templates/deployment.yaml
+    set:
+      rbac.create: false
+      controllerManager.scope.watchResources: ["deployment?.apps"]
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --watch-resource=deployment?.apps
+  - it: maps a full resource wildcard to all API groups
+    template: templates/rbac.yaml
+    set:
+      controllerManager.scope.watchResources: ["*"]
+    documentSelector: {path: kind, value: ClusterRole}
+    asserts:
+      - equal: {path: "rules[0].apiGroups", value: ["*"]}
+
+  - it: grants lease election access in the release namespace
+    template: templates/leader-election-rbac.yaml
+    asserts:
+      - hasDocuments: {count: 2}
+      - equal: {path: metadata.namespace, value: NAMESPACE}
+        documentIndex: 0
+      - equal: {path: "rules[0].resources", value: [leases]}
+        documentIndex: 0
+      - equal: {path: "rules[0].verbs", value: [get, create, update]}
+        documentIndex: 0
+  - it: omits election grants when election is disabled
+    template: templates/leader-election-rbac.yaml
+    set:
+      controllerManager.leaderElection.enabled: false
+    asserts:
+      - hasDocuments: {count: 0}
+  - it: grants only auth review creation for secure metrics
+    template: templates/metrics-rbac.yaml
+    asserts:
+      - hasDocuments: {count: 2}
+      - equal:
+          path: rules
+          value:
+            - apiGroups: [authentication.k8s.io]
+              resources: [tokenreviews]
+              verbs: [create]
+            - apiGroups: [authorization.k8s.io]
+              resources: [subjectaccessreviews]
+              verbs: [create]
+        documentIndex: 0
+  - it: omits auth grants when metrics are disabled
+    template: templates/metrics-rbac.yaml
+    set:
+      metrics.enabled: false
+    asserts:
+      - hasDocuments: {count: 0}
+  - it: omits auth grants for insecure metrics
+    template: templates/metrics-rbac.yaml
+    set:
+      metrics.secure: false
+    asserts:
+      - hasDocuments: {count: 0}
+  - it: omits election grants with supplied RBAC
+    template: templates/leader-election-rbac.yaml
+    set:
+      rbac.create: false
+    asserts:
+      - hasDocuments: {count: 0}
+  - it: omits metrics grants with supplied RBAC
+    template: templates/metrics-rbac.yaml
+    set:
+      rbac.create: false
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: grants Namespace access from the default resource list
+    template: templates/namespace-rbac.yaml
+    set:
+      controllerManager.scope.watchNamespaces: [team-a]
+    asserts:
+      - hasDocuments: {count: 4}
+  - it: omits Namespace grants when explicitly ignored
+    template: templates/namespace-rbac.yaml
+    set:
+      controllerManager.scope.watchNamespaces: [team-a]
+      controllerManager.scope.watchResources: [namespaces]
+      controllerManager.scope.ignoreResources: [namespaces]
+    asserts:
+      - hasDocuments: {count: 0}
+  - it: restricts Namespace writes to effective exact names
+    template: templates/namespace-rbac.yaml
+    set:
+      controllerManager.scope.watchNamespaces: [team-a, team-b, team-a]
+      controllerManager.scope.ignoreNamespaces: [team-b]
+      controllerManager.scope.watchResources: [namespaces]
+    asserts:
+      - hasDocuments: {count: 4}
+      - isKind: {of: ClusterRole}
+        documentIndex: 0
+      - equal:
+          path: rules
+          value:
+            - apiGroups: [""]
+              resources: [namespaces]
+              verbs: [get, list, watch]
+            - apiGroups: [""]
+              resources: [namespaces]
+              resourceNames: [team-a]
+              verbs: [delete, patch, update]
+        documentIndex: 0
+      - isKind: {of: ClusterRoleBinding}
+        documentIndex: 1
+      - equal: {path: "subjects[0].namespace", value: NAMESPACE}
+        documentIndex: 1
+      - isKind: {of: Role}
+        documentIndex: 2
+      - equal: {path: metadata.namespace, value: default}
+        documentIndex: 2
+      - lengthEqual: {path: rules, count: 2}
+        documentIndex: 2
+      - isKind: {of: RoleBinding}
+        documentIndex: 3
+      - equal: {path: metadata.namespace, value: default}
+        documentIndex: 3
+  - it: keeps Namespace rules out of namespaced manager Roles
+    template: templates/rbac.yaml
+    set:
+      controllerManager.scope.watchNamespaces: [team-a]
+      controllerManager.scope.watchResources: [namespaces, deployments.apps]
+    asserts:
+      - isKind: {of: Role}
+        documentIndex: 0
+      - lengthEqual: {path: rules, count: 3}
+        documentIndex: 0
+      - equal: {path: "rules[0].resources", value: [deployments]}
+        documentIndex: 0
+  - it: omits Namespace grants with supplied RBAC
+    template: templates/namespace-rbac.yaml
+    set:
+      rbac.create: false
+      controllerManager.scope.watchNamespaces: [team-a]
+      controllerManager.scope.watchResources: [namespaces]
+    asserts:
+      - hasDocuments: {count: 0}

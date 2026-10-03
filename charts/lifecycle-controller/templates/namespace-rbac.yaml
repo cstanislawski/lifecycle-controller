@@ -1,0 +1,62 @@
+{{- if .Values.rbac.create -}}
+{{- $scope := .Values.controllerManager.scope -}}
+{{- $resources := include "lifecycle-controller.watchResources" . | fromJsonArray -}}
+{{- if and (eq (include "lifecycle-controller.rbacScope" .) "namespaced") (has "namespaces" $resources) (not (has "namespaces" $scope.ignoreResources)) (not (has "*" $scope.ignoreResources)) }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "lifecycle-controller.fullname" . }}-namespace-role
+  labels:
+    {{- include "lifecycle-controller.labels" . | nindent 4 }}
+rules:
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["namespaces"]
+  resourceNames: {{ include "lifecycle-controller.rbacNamespaces" . }}
+  verbs: ["delete", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "lifecycle-controller.fullname" . }}-namespace-rolebinding
+  labels:
+    {{- include "lifecycle-controller.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "lifecycle-controller.fullname" . }}-namespace-role
+subjects:
+- kind: ServiceAccount
+  name: {{ include "lifecycle-controller.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+{{/* Kubernetes records Events for cluster objects in default. */}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "lifecycle-controller.fullname" . }}-namespace-events-role
+  namespace: default
+  labels:
+    {{- include "lifecycle-controller.labels" . | nindent 4 }}
+rules:
+  {{- include "lifecycle-controller.eventRules" . | nindent 0 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "lifecycle-controller.fullname" . }}-namespace-events-rolebinding
+  namespace: default
+  labels:
+    {{- include "lifecycle-controller.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "lifecycle-controller.fullname" . }}-namespace-events-role
+subjects:
+- kind: ServiceAccount
+  name: {{ include "lifecycle-controller.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+{{- end -}}
+{{- end -}}
