@@ -1,10 +1,16 @@
 package controller
 
 import (
+	"reflect"
+	"sort"
+	"strings"
 	"testing"
 
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func TestIsResourceAllowed(t *testing.T) {
@@ -87,6 +93,8 @@ func TestIsNamespaceAllowed(t *testing.T) {
 		config   ScopeConfig
 		ns       string
 		expected bool
+		cached   []string
+		cacheErr string
 	}{
 		{
 			name:     "Default Allow",
@@ -118,12 +126,70 @@ func TestIsNamespaceAllowed(t *testing.T) {
 			ns:       "default",
 			expected: false,
 		},
+		{
+			name:   "Exact lists remove exclusions and duplicates",
+			config: ScopeConfig{WatchNamespaces: []string{"team-a", "team-b", "team-a"}, IgnoreNamespaces: []string{"team-b"}},
+			ns:     "team-a", expected: true, cached: []string{"team-a"},
+		},
+		{
+			name:   "Two exact namespaces",
+			config: ScopeConfig{WatchNamespaces: []string{"team-b", "team-a"}},
+			ns:     "team-a", expected: true, cached: []string{"team-a", "team-b"},
+		},
+		{
+			name:   "Mixed exact names and patterns require cluster reads",
+			config: ScopeConfig{WatchNamespaces: []string{"team-a", "dev-?"}},
+			ns:     "team-a", expected: true,
+		},
+		{
+			name:   "Ignore glob removes one exact namespace",
+			config: ScopeConfig{WatchNamespaces: []string{"team-a", "dev-b"}, IgnoreNamespaces: []string{"dev-*"}},
+			ns:     "dev-b", cached: []string{"team-a"},
+		},
+		{
+			name:   "All exact namespaces ignored",
+			config: ScopeConfig{WatchNamespaces: []string{"team-a"}, IgnoreNamespaces: []string{"team-a"}},
+			ns:     "team-a", cacheErr: "at least one namespace",
+		},
+		{
+			name:   "Ignore glob excludes the entire exact list",
+			config: ScopeConfig{WatchNamespaces: []string{"team-a"}, IgnoreNamespaces: []string{"team-*"}},
+			ns:     "team-a", cacheErr: "at least one namespace",
+		},
+		{
+			name:   "Invalid namespace name",
+			config: ScopeConfig{WatchNamespaces: []string{"INVALID"}},
+			ns:     "team-a", cacheErr: "invalid namespace name",
+		},
+		{
+			name:     "Empty namespace name",
+			config:   ScopeConfig{WatchNamespaces: []string{""}},
+			expected: true, cacheErr: "invalid namespace name",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			allowed := tt.config.IsNamespaceAllowed(tt.ns)
 			g.Expect(allowed).To(Equal(tt.expected))
+			options, err := tt.config.CacheOptions()
+			if tt.cacheErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.cacheErr) {
+					t.Fatalf("want cache error containing %q, got %v", tt.cacheErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var namespaces []string
+			for namespace := range options.DefaultNamespaces {
+				namespaces = append(namespaces, namespace)
+			}
+			sort.Strings(namespaces)
+			if !reflect.DeepEqual(namespaces, tt.cached) {
+				t.Fatalf("cache namespaces: got %v, want %v", namespaces, tt.cached)
+			}
 		})
 	}
 }
@@ -135,6 +201,7 @@ func TestAllowLogic(t *testing.T) {
 	mkObj := func(kind, name, namespace string) *unstructured.Unstructured {
 		u := &unstructured.Unstructured{}
 		u.SetKind(kind)
+		u.SetAPIVersion("v1")
 		u.SetName(name)
 		u.SetNamespace(namespace)
 		return u
@@ -143,7 +210,7 @@ func TestAllowLogic(t *testing.T) {
 	tests := []struct {
 		name     string
 		config   ScopeConfig
-		obj      *unstructured.Unstructured
+		obj      client.Object
 		expected bool
 	}{
 		{
@@ -160,15 +227,30 @@ func TestAllowLogic(t *testing.T) {
 		},
 		{
 			name:     "Namespace Object Allowed (Matches Watch)",
-			config:   ScopeConfig{WatchNamespaces: []string{"foo"}},
+			config:   ScopeConfig{WatchNamespaces: []string{"foo"}, WatchResources: []string{"namespaces"}},
 			obj:      mkObj("Namespace", "foo", ""),
 			expected: true,
 		},
 		{
 			name:     "Namespace Object Denied (Mismatch Watch)",
-			config:   ScopeConfig{WatchNamespaces: []string{"foo"}},
+			config:   ScopeConfig{WatchNamespaces: []string{"foo"}, WatchResources: []string{"namespaces"}},
 			obj:      mkObj("Namespace", "bar", ""),
 			expected: false,
+		},
+		{
+			name:   "Namespace filter alone does not permit Namespace actions",
+			config: ScopeConfig{WatchNamespaces: []string{"foo"}},
+			obj:    mkObj("Namespace", "foo", ""),
+		},
+		{
+			name:   "Resource wildcard does not permit Namespace actions with namespace filters",
+			config: ScopeConfig{WatchNamespaces: []string{"foo"}, WatchResources: []string{"*"}},
+			obj:    mkObj("Namespace", "foo", ""),
+		},
+		{
+			name:   "Ignore rule excludes explicitly selected Namespace objects",
+			config: ScopeConfig{WatchNamespaces: []string{"foo"}, WatchResources: []string{"namespaces"}, IgnoreResources: []string{"namespace*"}},
+			obj:    mkObj("Namespace", "foo", ""),
 		},
 		{
 			name:     "Cluster Resource Denied (Strict Mode)",
@@ -193,6 +275,18 @@ func TestAllowLogic(t *testing.T) {
 			config:   ScopeConfig{WatchNamespaces: []string{"foo"}},
 			obj:      &unstructured.Unstructured{Object: map[string]interface{}{"metadata": map[string]interface{}{"namespace": "foo"}}},
 			expected: true,
+		},
+		{
+			name:   "Native Namespace without TypeMeta",
+			config: ScopeConfig{WatchNamespaces: []string{"foo"}, WatchResources: []string{"namespaces"}},
+			obj:    &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "foo"}}, expected: true,
+		},
+		{
+			name:   "Custom Namespace kind is not a native Namespace",
+			config: ScopeConfig{WatchNamespaces: []string{"foo"}, WatchResources: []string{"namespaces"}},
+			obj: &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "example.com/v1", "kind": "Namespace", "metadata": map[string]interface{}{"name": "foo"},
+			}},
 		},
 	}
 

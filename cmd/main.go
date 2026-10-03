@@ -166,7 +166,20 @@ func main() {
 		metricsServerOptions.KeyName = metricsCertKey
 	}
 
+	scopeConfig := controller.ScopeConfig{
+		WatchResources:   watchResources,
+		IgnoreResources:  ignoreResources,
+		WatchNamespaces:  watchNamespaces,
+		IgnoreNamespaces: ignoreNamespaces,
+	}
+	cacheOptions, err := scopeConfig.CacheOptions()
+	if err != nil {
+		setupLog.Error(err, "invalid namespace watch configuration")
+		os.Exit(1)
+	}
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+		Cache:                  cacheOptions,
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
@@ -188,13 +201,6 @@ func main() {
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
-	}
-
-	scopeConfig := controller.ScopeConfig{
-		WatchResources:   watchResources,
-		IgnoreResources:  ignoreResources,
-		WatchNamespaces:  watchNamespaces,
-		IgnoreNamespaces: ignoreNamespaces,
 	}
 
 	setupLog.Info("Starting with scope configuration",

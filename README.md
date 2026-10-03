@@ -167,7 +167,7 @@ In dry-run, relative and recurring schedules are logged without saving state or 
 
 By default, the controller discovers resources across all namespaces and watches those that support `get`, `list`, `watch`, `patch`, and `delete`. It skips subresources and APIs that lack these verbs. An explicit watch pattern that selects an unsupported API causes a discovery error unless an ignore rule excludes that API.
 
-Resource filters select which API types to watch. Namespace filters limit which objects the controller acts on, but the cache still reads across all namespaces. Namespace filters do not provide tenant isolation.
+Resource filters select which API types to watch. The controller reads, deletes, and restarts resources only in the filtered namespaces. Namespace patterns limit deletions and restarts but require cluster-wide reads.
 
 - `--watch-resource` (repeatable) - glob pattern for resources to watch.
   - Format - `<resource>.<group>` for grouped APIs (e.g., `deployments.apps`) or `<resource>` for core APIs (e.g., `pods`).
@@ -175,7 +175,7 @@ Resource filters select which API types to watch. Namespace filters limit which 
   - Broad patterns can select APIs that lack the required verbs. Prefer exact resource names.
 - `--ignore-resource` (repeatable) - glob pattern for resources to strictly ignore. Takes precedence over watch rules.
 - `--watch-namespace` (repeatable) - glob pattern for namespaces to watch (e.g. `default`, `dev-*`).
-  - If provided, the controller acts only on objects in matching namespaces. It excludes other cluster-scoped objects, except watched `Namespace` objects whose names match the pattern.
+  - If provided, the controller deletes or restarts only objects in matching namespaces. Namespace objects also require `--watch-resource=namespaces`. Other cluster-scoped resources are excluded.
 - `--ignore-namespace` (repeatable) - glob pattern for namespaces to strictly ignore. Takes precedence over watch rules.
 
 ### RBAC
