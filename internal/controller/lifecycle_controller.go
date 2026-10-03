@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"regexp"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -128,63 +126,6 @@ type LifecycleReconciler struct {
 // +kubebuilder:rbac:groups=*,resources=*,verbs=get;list;watch;delete;update;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
-
-// parseExtendedDuration enhances time.ParseDuration to support 'd' for days.
-func parseExtendedDuration(durationStr string) (time.Duration, error) {
-	// Regex to find number and unit, specifically looking for 'd'
-	re := regexp.MustCompile(`(\d+)\s*d`)
-	matches := re.FindAllStringSubmatch(durationStr, -1)
-
-	var dayDuration time.Duration
-	// Replace day components with hour components
-	processedStr := durationStr
-	for _, match := range matches {
-		if len(match) == 2 {
-			days, err := strconv.ParseInt(match[1], 10, 64)
-			if err != nil {
-				return 0, fmt.Errorf("invalid number of days: %s", match[1])
-			}
-			if days > (math.MaxInt64-int64(dayDuration))/int64(24*time.Hour) {
-				return 0, fmt.Errorf("number of days is too large: %s", match[1])
-			}
-			dayDuration += time.Duration(days) * 24 * time.Hour
-			processedStr = strings.Replace(processedStr, match[0], "", 1)
-		}
-	}
-
-	// Remove spaces to avoid parsing issues with the remaining string
-	processedStr = strings.ReplaceAll(processedStr, " ", "")
-
-	if processedStr == "" {
-		if dayDuration > 0 {
-			return dayDuration, nil
-		}
-		return 0, fmt.Errorf("duration string '%s' is empty or invalid", durationStr)
-	}
-
-	remainder, err := time.ParseDuration(processedStr)
-	if err != nil {
-		return 0, err
-	}
-	if remainder > 0 && dayDuration > time.Duration(math.MaxInt64)-remainder {
-		return 0, fmt.Errorf("duration is too large: %s", durationStr)
-	}
-	return dayDuration + remainder, nil
-}
-
-func parseRestartEvery(durationStr string) (time.Duration, error) {
-	if strings.HasPrefix(strings.TrimSpace(durationStr), "-") {
-		return 0, fmt.Errorf("duration must be positive")
-	}
-	duration, err := parseExtendedDuration(durationStr)
-	if err != nil {
-		return 0, err
-	}
-	if duration < minimumRestartEveryInterval {
-		return 0, fmt.Errorf("duration must be at least %s", minimumRestartEveryInterval)
-	}
-	return duration, nil
-}
 
 // getReferenceTime determines the starting point for a relative timer based on annotations.
 func (r *LifecycleReconciler) getReferenceTime(obj client.Object, logger logr.Logger) time.Time {
