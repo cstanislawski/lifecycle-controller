@@ -3,7 +3,9 @@ package controller
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -15,6 +17,11 @@ type ScopeConfig struct {
 	IgnoreResources  []string
 	WatchNamespaces  []string
 	IgnoreNamespaces []string
+}
+
+// watchesNamespaceObjects requires an exact selection when namespace filters are set.
+func (c ScopeConfig) watchesNamespaceObjects() bool {
+	return slices.Contains(c.WatchResources, "namespaces") && c.IsResourceAllowed("namespaces", "")
 }
 
 // matches checks if value matches any of the glob patterns.
@@ -95,12 +102,12 @@ func allow(config ScopeConfig, obj client.Object) bool {
 
 	// Case 2: Resource is Cluster-Scoped (ns == "")
 
-	// Special Handling: The "Namespace" resource itself.
-	// If we are watching namespace "foo", we want to allow actions on the Namespace object named "foo".
-	// We check the Kind. Note: Unstructured objects (used by this controller) always have GVK populated.
 	gvk := obj.GetObjectKind().GroupVersionKind()
-	if gvk.Kind == "Namespace" {
-		// For a Namespace object, its Name IS the namespace identifier.
+	_, nativeNamespace := obj.(*corev1.Namespace)
+	if nativeNamespace || (gvk.Group == "" && gvk.Version == "v1" && gvk.Kind == "Namespace") {
+		if len(config.WatchNamespaces) > 0 && !config.watchesNamespaceObjects() {
+			return false
+		}
 		return config.IsNamespaceAllowed(obj.GetName())
 	}
 

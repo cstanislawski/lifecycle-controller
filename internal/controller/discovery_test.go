@@ -109,6 +109,10 @@ func TestExplicitDiscoverySetupRejectsDiscoveryErrors(t *testing.T) {
 }
 
 func TestExplicitDiscoverySetupRejectsMissingAndUnwatchableResources(t *testing.T) {
+	node := apiResource("nodes", "Node", watchVerbs)
+	node.Namespaced = false
+	namespace := apiResource("namespaces", "Namespace", watchVerbs)
+	namespace.Namespaced = false
 	tests := map[string]struct {
 		config   ScopeConfig
 		response discoveryResponse
@@ -127,6 +131,21 @@ func TestExplicitDiscoverySetupRejectsMissingAndUnwatchableResources(t *testing.
 				coreResources(apiResource("pods", "Pod", metav1.Verbs{"get", "list"})),
 			}},
 			want: "unwatchable resources=[pods]",
+		},
+		"cluster resource with namespace filters": {
+			config:   ScopeConfig{WatchResources: []string{"nodes"}, WatchNamespaces: []string{"team-a"}},
+			response: discoveryResponse{lists: []*metav1.APIResourceList{coreResources(node)}},
+			want:     "requires an empty namespace watch list",
+		},
+		"Namespace resource glob with exact namespace filters": {
+			config:   ScopeConfig{WatchResources: []string{"namespace*"}, WatchNamespaces: []string{"team-a"}},
+			response: discoveryResponse{lists: []*metav1.APIResourceList{coreResources(namespace)}},
+			want:     "only an exact namespaces resource selection",
+		},
+		"Namespace resource glob with namespace patterns": {
+			config:   ScopeConfig{WatchResources: []string{"namespace*"}, WatchNamespaces: []string{"team-*"}},
+			response: discoveryResponse{lists: []*metav1.APIResourceList{coreResources(namespace)}},
+			want:     "only an exact namespaces resource selection",
 		},
 	}
 
@@ -154,68 +173,90 @@ func TestExplicitDiscoverySetupRejectsMissingAndUnwatchableResources(t *testing.
 }
 
 func TestBroadDiscoveryRecoversBeforeBecomingReady(t *testing.T) {
-	partialErr := &discovery.ErrGroupDiscoveryFailed{Groups: map[schema.GroupVersion]error{
-		{Group: "apps", Version: "v1"}: errors.New("temporarily unavailable"),
-	}}
-	client := &scriptedDiscovery{responses: []discoveryResponse{
-		{
-			lists: []*metav1.APIResourceList{coreResources(apiResource("pods", "Pod", watchVerbs))},
-			err:   partialErr,
-		},
-		{err: errors.New("API server unavailable")},
-		{lists: []*metav1.APIResourceList{coreResources(apiResource("pods", "Pod", watchVerbs))}},
-	}}
-	syncStarted := make(chan struct{})
-	releaseSync := make(chan struct{})
-	coordinator := newTestCoordinator(client, ScopeConfig{}, func(resources []discoveredResource) (func(context.Context) error, error) {
-		if len(resources) != 1 || resources[0].key != "pods" {
-			return nil, fmt.Errorf("unexpected recovered resources: %#v", resources)
-		}
-		return func(ctx context.Context) error {
-			close(syncStarted)
-			select {
-			case <-releaseSync:
-				return nil
-			case <-ctx.Done():
-				return ctx.Err()
+	for _, test := range []struct {
+		name   string
+		config ScopeConfig
+		want   []string
+	}{
+		{name: "cluster defaults", want: []string{"namespaces", "nodes", "pods"}},
+		{name: "exact namespace list", config: ScopeConfig{WatchNamespaces: []string{"team-a"}}, want: []string{"pods"}},
+		{name: "namespace patterns", config: ScopeConfig{WatchNamespaces: []string{"team-*"}}, want: []string{"pods"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			namespace := apiResource("namespaces", "Namespace", watchVerbs)
+			namespace.Namespaced = false
+			node := apiResource("nodes", "Node", watchVerbs)
+			node.Namespaced = false
+			resourceList := coreResources(namespace, node, apiResource("pods", "Pod", watchVerbs))
+			partialErr := &discovery.ErrGroupDiscoveryFailed{Groups: map[schema.GroupVersion]error{
+				{Group: "apps", Version: "v1"}: errors.New("temporarily unavailable"),
+			}}
+			client := &scriptedDiscovery{responses: []discoveryResponse{
+				{
+					lists: []*metav1.APIResourceList{resourceList},
+					err:   partialErr,
+				},
+				{err: errors.New("API server unavailable")},
+				{lists: []*metav1.APIResourceList{resourceList}},
+			}}
+			syncStarted := make(chan struct{})
+			releaseSync := make(chan struct{})
+			coordinator := newTestCoordinator(client, test.config, func(resources []discoveredResource) (func(context.Context) error, error) {
+				keys := make([]string, 0, len(resources))
+				for _, resource := range resources {
+					keys = append(keys, resource.key)
+				}
+				if strings.Join(keys, ",") != strings.Join(test.want, ",") {
+					return nil, fmt.Errorf("unexpected recovered resources: %#v", resources)
+				}
+				return func(ctx context.Context) error {
+					close(syncStarted)
+					select {
+					case <-releaseSync:
+						return nil
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}, nil
+			})
+
+			_, retry, err := coordinator.prepareInitial()
+			if err != nil || !retry {
+				t.Fatalf("broad partial discovery should defer and retry: retry=%v err=%v", retry, err)
 			}
-		}, nil
-	})
+			if err := coordinator.state.check(); err == nil {
+				t.Fatal("partial discovery must be unready")
+			}
 
-	_, retry, err := coordinator.prepareInitial()
-	if err != nil || !retry {
-		t.Fatalf("broad partial discovery should defer and retry: retry=%v err=%v", retry, err)
-	}
-	if err := coordinator.state.check(); err == nil {
-		t.Fatal("partial discovery must be unready")
-	}
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() { done <- coordinator.Start(ctx) }()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- coordinator.Start(ctx) }()
+			select {
+			case <-syncStarted:
+			case <-time.After(time.Second):
+				t.Fatal("discovery did not recover")
+			}
+			if err := coordinator.state.check(); err == nil {
+				t.Fatal("complete discovery without cache sync must remain unready")
+			}
+			close(releaseSync)
+			eventually(t, time.Second, func() bool { return coordinator.state.check() == nil })
+			if client.callCount() < 3 {
+				t.Fatalf("expected retries through total error to recovery, got %d calls", client.callCount())
+			}
 
-	select {
-	case <-syncStarted:
-	case <-time.After(time.Second):
-		t.Fatal("discovery did not recover")
-	}
-	if err := coordinator.state.check(); err == nil {
-		t.Fatal("complete discovery without cache sync must remain unready")
-	}
-	close(releaseSync)
-	eventually(t, time.Second, func() bool { return coordinator.state.check() == nil })
-	if client.callCount() < 3 {
-		t.Fatalf("expected retries through total error to recovery, got %d calls", client.callCount())
-	}
+			cancel()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("coordinator shutdown failed: %v", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("coordinator did not stop")
+			}
 
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("coordinator shutdown failed: %v", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("coordinator did not stop")
+		})
 	}
 }
 
@@ -263,14 +304,31 @@ func TestReadinessCheckTreatsOnlyPassiveLeaderReplicaAsReady(t *testing.T) {
 }
 
 func TestExplicitIgnorePrecedenceCanProduceEmptyWatchSet(t *testing.T) {
-	for name, lists := range map[string][]*metav1.APIResourceList{
-		"resource present": {coreResources(apiResource("configmaps", "ConfigMap", watchVerbs))},
-		"resource absent":  {coreResources(apiResource("pods", "Pod", watchVerbs))},
+	namespace := apiResource("namespaces", "Namespace", watchVerbs)
+	namespace.Namespaced = false
+	for name, test := range map[string]struct {
+		lists  []*metav1.APIResourceList
+		config ScopeConfig
+	}{
+		"resource present": {
+			lists:  []*metav1.APIResourceList{coreResources(apiResource("configmaps", "ConfigMap", watchVerbs))},
+			config: ScopeConfig{WatchResources: []string{"configmaps"}, IgnoreResources: []string{"configmaps"}},
+		},
+		"resource absent": {
+			lists:  []*metav1.APIResourceList{coreResources(apiResource("pods", "Pod", watchVerbs))},
+			config: ScopeConfig{WatchResources: []string{"configmaps"}, IgnoreResources: []string{"configmaps"}},
+		},
+		"cluster resource ignored with namespace filters": {
+			lists: []*metav1.APIResourceList{coreResources(namespace)},
+			config: ScopeConfig{
+				WatchResources: []string{"namespaces"}, IgnoreResources: []string{"namespaces"}, WatchNamespaces: []string{"team-a"},
+			},
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			plan, err := planResources(
-				lists,
-				ScopeConfig{WatchResources: []string{"configmaps"}, IgnoreResources: []string{"configmaps"}},
+				test.lists,
+				test.config,
 				logr.Discard(),
 			)
 			if err != nil {
