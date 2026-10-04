@@ -104,14 +104,14 @@ spec:
   - `lifecycle.cezary.dev/dry-run` - enables dry-run for a resource. Accepts standard boolean values such as `true`, `false`, `1`, and `0`. Invalid values create a warning Event and no action is taken.
   - `lifecycle.cezary.dev/managed-by: "lifecycle-controller"` - added by the controller when it mutates a resource, such as converting `*-after` annotations to `*-at` annotations, maintaining restart schedule state, or triggering a restart.
 
-- For watched resources with a `spec.template` field:
+- For watched Deployments, StatefulSets, and DaemonSets in the `apps` API group:
   - `lifecycle.cezary.dev/restart-at` - requests one Pod template update at or after a specific date and time.
     - The value must be an RFC3339 timestamp with explicit timezone offset (`Z` or `±hh:mm`).
   - `lifecycle.cezary.dev/restart-after` - requests one Pod template update after a relative duration (e.g., `1h`). The controller converts this to an absolute `restart-at` annotation.
   - `lifecycle.cezary.dev/restart-every` - requests recurring Pod template updates at a relative interval (e.g., `7d` for weekly updates), with a minimum duration of `1m`.
   - `lifecycle.cezary.dev/restart-cron` - requests recurring Pod template updates based on a standard five-field, minute-resolution cron expression (e.g., `"0 3 * * *"` for daily at 03:00).
   - `lifecycle.cezary.dev/cron-timezone` - optional timezone for `restart-cron` only. Must be valid IANA timezone (e.g., `America/New_York`). Defaults to `UTC`.
-  - The controller checks for `spec.template`. Template annotations do not need to exist before the restart request. This field check does not guarantee that the API accepts the patch or that the workload replaces existing Pods.
+  - Other resources receive an `UnsupportedRestartKind` warning Event and their restart annotations remain unchanged.
 
 ### Relative duration format
 
@@ -146,7 +146,7 @@ After conversion, restart priority is `restart-at`, then `restart-cron`, then `r
 
 ### Restart mechanism
 
-Deployments and StatefulSets or DaemonSets with `RollingUpdate` can replace Pods after a template change. StatefulSets and DaemonSets with `OnDelete`, and ReplicaSets, do not automatically replace existing Pods for this change. Paused Deployments and StatefulSet partitions can also prevent or limit Pod replacement. The controller does not wait for a rollout to complete.
+Restarts are supported only for native Deployments, StatefulSets, and DaemonSets, while deletion remains available for all watched resources.
 
 - Triggering a restart - the controller writes `lifecycle.cezary.dev/restartedAt: "<timestamp>"` into the resource's `spec.template.metadata.annotations`. The workload controller determines how to apply the changed template.
   - The same pod template mutation also adds `lifecycle.cezary.dev/managed-by: "lifecycle-controller"` to `spec.template.metadata.annotations`.
@@ -180,7 +180,7 @@ Resource filters select which API types to watch. The controller reads, deletes,
 
 ### RBAC
 
-By default, the Helm chart watches standard workloads, ConfigMaps, Services, Ingresses, NetworkPolicies, PersistentVolumeClaims, HorizontalPodAutoscalers, PodDisruptionBudgets, Namespaces, and PersistentVolumes. It grants `get`, `list`, `watch`, `patch`, `update`, and `delete` for those resources, plus `Event` permissions and permissions for enabled leader-election and secure-metrics features.
+By default, the Helm chart watches standard workloads, ConfigMaps, Services, Ingresses, NetworkPolicies, PersistentVolumeClaims, HorizontalPodAutoscalers, PodDisruptionBudgets, Namespaces, and PersistentVolumes. It grants `get`, `list`, `watch`, `patch`, `update`, and `delete` for those resources, plus Event permissions and permissions for enabled leader-election and secure-metrics features.
 
 A list of filtered namespaces creates a `Role` and `RoleBinding` in each watched namespace. Namespace patterns or leaving the list unset results in a `ClusterRole`. Namespace objects still require cluster permissions.
 
