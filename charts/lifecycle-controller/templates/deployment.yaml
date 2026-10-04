@@ -67,11 +67,11 @@ spec:
             - --ignore-namespace={{ . }}
             {{- end }}
           ports:
-          - containerPort: 8081
+          - containerPort: {{ include "lifecycle-controller.bindPort" (dict "address" .Values.controllerManager.healthProbeBindAddress "key" "controllerManager.healthProbeBindAddress") }}
             name: healthz
             protocol: TCP
           {{- if .Values.metrics.enabled }}
-          - containerPort: {{ trimPrefix ":" .Values.metrics.bindAddress }}
+          - containerPort: {{ include "lifecycle-controller.bindPort" (dict "address" .Values.metrics.bindAddress "key" "metrics.bindAddress") }}
             name: metrics
             protocol: TCP
           {{- end }}
