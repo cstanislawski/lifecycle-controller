@@ -1,0 +1,80 @@
+suite: Action timing configuration
+templates:
+  - templates/deployment.yaml
+
+tests:
+  - it: preserves catch-up by default for both actions
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --restart-catch-up=always
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --delete-catch-up=always
+
+  - it: configures restart and deletion independently
+    set:
+      controllerManager.actionTiming.restart.catchUp: never
+      controllerManager.actionTiming.delete.catchUp: 15m
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --restart-catch-up=never
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --delete-catch-up=15m
+
+  - it: accepts a day duration and an explicit always policy
+    set:
+      controllerManager.actionTiming.restart.catchUp: 1d
+      controllerManager.actionTiming.delete.catchUp: always
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --restart-catch-up=1d
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --delete-catch-up=always
+
+  - it: defaults missing action timing to always for preserved release values
+    set:
+      controllerManager.actionTiming: null
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --restart-catch-up=always
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --delete-catch-up=always
+
+  - it: defaults missing action maps to always
+    set:
+      controllerManager.actionTiming.restart: null
+      controllerManager.actionTiming.delete: null
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --restart-catch-up=always
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --delete-catch-up=always
+
+  - it: defaults a missing policy to always
+    set:
+      controllerManager.actionTiming.restart.catchUp: null
+      controllerManager.actionTiming.delete.catchUp: null
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --restart-catch-up=always
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --delete-catch-up=always
+
+  - it: passes an empty policy to startup validation
+    set:
+      controllerManager.actionTiming.restart.catchUp: ""
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --restart-catch-up=

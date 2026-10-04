@@ -63,6 +63,7 @@ func main() {
 	var watchResources, ignoreResources arrayFlags
 	var watchNamespaces, ignoreNamespaces arrayFlags
 	var globalDryRun bool
+	var deleteCatchUp, restartCatchUp string
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -91,6 +92,10 @@ func main() {
 	flag.Var(&ignoreNamespaces, "ignore-namespace", "Glob pattern for namespaces to ignore. Can be repeated.")
 	flag.BoolVar(&globalDryRun, "dry-run", false,
 		"Enable dry-run mode for all resources. When set, actions are logged but not executed.")
+	flag.StringVar(&deleteCatchUp, "delete-catch-up", "always",
+		"Default deletion catch-up policy: always, never, or a positive duration (e.g. 15m).")
+	flag.StringVar(&restartCatchUp, "restart-catch-up", "always",
+		"Default restart catch-up policy: always, never, or a positive duration (e.g. 15m).")
 
 	opts := zap.Options{}
 
@@ -98,6 +103,16 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	deletePolicy, err := controller.ParseCatchUpPolicy(deleteCatchUp)
+	if err != nil {
+		setupLog.Error(err, "invalid --delete-catch-up")
+		os.Exit(1)
+	}
+	restartPolicy, err := controller.ParseCatchUpPolicy(restartCatchUp)
+	if err != nil {
+		setupLog.Error(err, "invalid --restart-catch-up")
+		os.Exit(1)
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -210,12 +225,14 @@ func main() {
 		"ignoreNamespaces", ignoreNamespaces,
 	)
 	setupLog.Info("Global dry-run mode", "enabled", globalDryRun)
+	setupLog.Info("Action catch-up policies", "delete", deleteCatchUp, "restart", restartCatchUp)
 
 	reconciler := &controller.LifecycleReconciler{
 		Client:       mgr.GetClient(),
 		Scheme:       mgr.GetScheme(),
 		Config:       scopeConfig,
 		GlobalDryRun: globalDryRun,
+		ActionTiming: controller.ActionTimingConfig{Delete: deletePolicy, Restart: restartPolicy},
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Lifecycle")

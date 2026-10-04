@@ -53,6 +53,19 @@ spec:
             - --enable-http2
             {{- end }}
             - --dry-run={{ .Values.controllerManager.dryRun }}
+            {{- $timing := .Values.controllerManager.actionTiming | default dict }}
+            {{- $restartTiming := $timing.restart | default dict }}
+            {{- $deleteTiming := $timing.delete | default dict }}
+            {{- $restartCatchUp := "always" }}
+            {{- $deleteCatchUp := "always" }}
+            {{- if hasKey $restartTiming "catchUp" }}
+            {{- $restartCatchUp = $restartTiming.catchUp }}
+            {{- end }}
+            {{- if hasKey $deleteTiming "catchUp" }}
+            {{- $deleteCatchUp = $deleteTiming.catchUp }}
+            {{- end }}
+            - {{ printf "--restart-catch-up=%v" $restartCatchUp | quote }}
+            - {{ printf "--delete-catch-up=%v" $deleteCatchUp | quote }}
             - --zap-log-level={{ .Values.controllerManager.logLevel }}
             {{- range (include "lifecycle-controller.watchResources" . | fromJsonArray) }}
             - --watch-resource={{ . }}

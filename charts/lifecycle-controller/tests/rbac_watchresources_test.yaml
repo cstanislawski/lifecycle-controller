@@ -43,6 +43,8 @@ tests:
             - --metrics-bind-address=:8443
             - --metrics-secure=true
             - --dry-run=false
+            - --restart-catch-up=always
+            - --delete-catch-up=always
             - --zap-log-level=info
             - --watch-resource=pods
             - --watch-resource=deployments.apps

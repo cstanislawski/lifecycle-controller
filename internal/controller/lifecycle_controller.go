@@ -3,12 +3,10 @@ package controller
 import (
 	"context"
 	"fmt"
-	"math"
 	"strconv"
 	"time"
 
 	"github.com/go-logr/logr"
-	"github.com/robfig/cron/v3"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -23,6 +21,7 @@ import (
 const (
 	CronTimezoneAnnotation          = "lifecycle.cezary.dev/cron-timezone"
 	DryRunAnnotation                = "lifecycle.cezary.dev/dry-run"
+	CatchUpAnnotation               = "lifecycle.cezary.dev/catch-up"
 	ReferencePointAnnotation        = "lifecycle.cezary.dev/reference-point"
 	DeleteAtAnnotation              = "lifecycle.cezary.dev/delete-at"
 	DeleteAfterAnnotation           = "lifecycle.cezary.dev/delete-after"
@@ -43,64 +42,6 @@ type resourceRequest struct {
 	GVK schema.GroupVersionKind
 }
 
-// recurringSchedule describes the two decisions needed by recurring restart
-// reconciliation: the next occurrence and the anchor to persist after missed
-// occurrences are coalesced.
-type recurringSchedule interface {
-	Next(time.Time) time.Time
-	coalescedAnchor(lastRestart, now time.Time) time.Time
-}
-
-type intervalRecurringSchedule struct {
-	duration time.Duration
-}
-
-func (s intervalRecurringSchedule) Next(anchor time.Time) time.Time {
-	return anchor.Add(s.duration)
-}
-
-func (s intervalRecurringSchedule) coalescedAnchor(lastRestart, now time.Time) time.Time {
-	return now.Add(-elapsedModulo(lastRestart, now, s.duration))
-}
-
-func elapsedModulo(start, end time.Time, interval time.Duration) time.Duration {
-	// time.Time.Sub saturates at the largest duration, so retain only each
-	// chunk's modulo while advancing across anchors farther than ~292 years.
-	var remainder time.Duration
-	for cursor := start; cursor.Before(end); {
-		chunk := end.Sub(cursor)
-		next := end
-		if chunk == time.Duration(math.MaxInt64) {
-			next = cursor.Add(chunk)
-		}
-
-		chunk %= interval
-		if remainder >= interval-chunk {
-			remainder -= interval - chunk
-		} else {
-			remainder += chunk
-		}
-		cursor = next
-	}
-	return remainder
-}
-
-type cronRecurringSchedule struct {
-	cron.Schedule
-}
-
-func (cronRecurringSchedule) coalescedAnchor(_ time.Time, now time.Time) time.Time {
-	return now
-}
-
-func planRecurringRestart(schedule recurringSchedule, lastRestart, now time.Time) (scheduledAt, coalescedAnchor time.Time, due bool) {
-	scheduledAt = schedule.Next(lastRestart)
-	if now.Before(scheduledAt) {
-		return scheduledAt, lastRestart, false
-	}
-	return scheduledAt, schedule.coalescedAnchor(lastRestart, now), true
-}
-
 // LifecycleReconciler reconciles objects with lifecycle annotations.
 type LifecycleReconciler struct {
 	client.Client
@@ -108,9 +49,11 @@ type LifecycleReconciler struct {
 	Recorder     eventRecorder
 	Config       ScopeConfig
 	GlobalDryRun bool
+	ActionTiming ActionTimingConfig
+	now          func() time.Time
+	timers       actionTimers
 	discovery    preferredResourceDiscovery
 	coverage     *coverageState
-	now          func() time.Time
 }
 
 // +kubebuilder:rbac:groups=*,resources=*,verbs=get;list;watch;delete;update;patch
@@ -170,6 +113,7 @@ func (r *LifecycleReconciler) Reconcile(ctx context.Context, req resourceRequest
 	obj.SetGroupVersionKind(req.GVK)
 	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
 		if apierrors.IsNotFound(err) {
+			r.forgetRequestTiming(req)
 			logger.Info("object not found, likely deleted", "gvk", req.GVK)
 			return ctrl.Result{}, nil
 		}
@@ -183,6 +127,7 @@ func (r *LifecycleReconciler) Reconcile(ctx context.Context, req resourceRequest
 func (r *LifecycleReconciler) reconcileLogic(ctx context.Context, obj client.Object, logger logr.Logger) (ctrl.Result, error) {
 	annotations := obj.GetAnnotations()
 	if len(annotations) == 0 {
+		r.forgetTiming(obj)
 		return ctrl.Result{}, nil
 	}
 
@@ -201,6 +146,7 @@ func (r *LifecycleReconciler) reconcileLogic(ctx context.Context, obj client.Obj
 	isDryRun, err := r.dryRunEnabled(obj)
 	if err != nil {
 		logger.Error(err, "invalid dry-run annotation; taking no action")
+		r.forgetTiming(obj)
 		r.Recorder.Eventf(obj, "Warning", "InvalidAnnotationValue", "%v; taking no action", err)
 		return ctrl.Result{}, nil
 	}
@@ -213,6 +159,7 @@ func (r *LifecycleReconciler) reconcileLogic(ctx context.Context, obj client.Obj
 	hasRestartAnno := annotations[RestartAtAnnotation] != "" || annotations[RestartAfterAnnotation] != "" || annotations[RestartCronAnnotation] != "" || annotations[RestartEveryAnnotation] != ""
 
 	if hasDeleteAnno && hasRestartAnno {
+		r.forgetTiming(obj)
 		logger.Info("Conflict: Resource has both delete and restart annotations. Taking no action.", "resource", client.ObjectKeyFromObject(obj))
 		r.Recorder.Event(obj, "Warning", "ConflictingAnnotations", "Resource has both delete and restart annotations.")
 		return ctrl.Result{}, nil
@@ -225,269 +172,6 @@ func (r *LifecycleReconciler) reconcileLogic(ctx context.Context, obj client.Obj
 		return r.handleRestart(ctx, u, isDryRun, logger)
 	}
 
+	r.forgetTiming(obj)
 	return ctrl.Result{}, nil
-}
-
-func (r *LifecycleReconciler) handleDeletion(ctx context.Context, obj *unstructured.Unstructured, isDryRun bool, logger logr.Logger) (ctrl.Result, error) {
-	annotations := obj.GetAnnotations()
-
-	if deleteAfterStr := annotations[DeleteAfterAnnotation]; deleteAfterStr != "" {
-		if annotations[ReferencePointAnnotation] == ReferencePointCreationTimestamp && annotations[DeleteAtAnnotation] != "" {
-			logger.Info("Ignoring delete-after because delete-at is already set with creationTimestamp reference point")
-			if isDryRun {
-				logger.Info("[DRY-RUN] Would remove redundant delete-after annotation")
-				return ctrl.Result{}, nil
-			}
-			delete(annotations, DeleteAfterAnnotation)
-			obj.SetAnnotations(annotations)
-			markManagedBy(obj)
-			if err := r.Update(ctx, obj); err != nil {
-				logger.Error(err, "failed to remove redundant delete-after annotation")
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{RequeueAfter: time.Nanosecond}, nil
-		}
-
-		duration, err := parseExtendedDuration(deleteAfterStr)
-		if err != nil {
-			logger.Error(err, "invalid duration format for delete-after annotation", "value", deleteAfterStr)
-			r.Recorder.Eventf(obj, "Warning", "InvalidAnnotation", "Invalid format for delete-after annotation: %v", err)
-			return ctrl.Result{}, nil
-		}
-		referenceTime := r.getReferenceTime(obj, logger)
-		deletionTime := referenceTime.Add(duration)
-
-		if isDryRun {
-			logger.Info("[DRY-RUN] Would convert delete-after to delete-at without modifying the resource", "deleteAfter", deleteAfterStr, "calculatedDeleteAt", deletionTime.UTC().Format(time.RFC3339))
-			r.Recorder.Eventf(obj, "Normal", "DryRunDelete", "Dry-run: Resource would be scheduled for deletion at %s.", deletionTime.UTC().Format(time.RFC3339))
-			return ctrl.Result{}, nil
-		}
-
-		logger.Info("Converting delete-after to delete-at", "deleteAfter", deleteAfterStr, "calculatedDeleteAt", deletionTime.UTC().Format(time.RFC3339))
-		newAnnotations := obj.GetAnnotations()
-		if newAnnotations == nil {
-			newAnnotations = make(map[string]string)
-		}
-		newAnnotations[DeleteAtAnnotation] = deletionTime.UTC().Format(time.RFC3339)
-		delete(newAnnotations, DeleteAfterAnnotation)
-		obj.SetAnnotations(newAnnotations)
-		markManagedBy(obj)
-
-		if err := r.Update(ctx, obj); err != nil {
-			logger.Error(err, "failed to update object with delete-at annotation")
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: time.Nanosecond}, nil
-	}
-
-	if deleteAtStr := annotations[DeleteAtAnnotation]; deleteAtStr != "" {
-		deleteAtTime, err := time.Parse(time.RFC3339, deleteAtStr)
-		if err != nil {
-			logger.Error(err, "invalid format for delete-at annotation", "value", deleteAtStr)
-			r.Recorder.Eventf(obj, "Warning", "InvalidAnnotation", "Invalid format for delete-at annotation: %v", err)
-			return ctrl.Result{}, nil
-		}
-
-		if !r.currentTime().Before(deleteAtTime) {
-			logger.Info("Deleting resource based on delete-at annotation", "targetTime", deleteAtTime.String())
-			if !isDryRun {
-				uid := obj.GetUID()
-				resourceVersion := obj.GetResourceVersion()
-				preconditions := client.Preconditions{UID: &uid, ResourceVersion: &resourceVersion}
-				if err := r.Delete(ctx, obj, preconditions); err != nil {
-					if !apierrors.IsNotFound(err) {
-						logger.Error(err, "failed to delete object")
-						r.Recorder.Eventf(obj, "Warning", "DeletionFailed", "Failed to delete resource: %v", err)
-						return ctrl.Result{}, err
-					}
-				}
-				r.Recorder.Eventf(obj, "Normal", "Deleted", "Resource deleted based on delete-at annotation: %s", deleteAtStr)
-			} else {
-				logger.Info("[DRY-RUN] Would delete resource now")
-				r.Recorder.Event(obj, "Normal", "DryRunDelete", "Dry-run: Resource would be deleted now.")
-			}
-			return ctrl.Result{}, nil
-		} else {
-			result := r.requeueForNextOccurrence(deleteAtTime)
-			logger.Info("Resource deletion scheduled for a future time", "requeueAfter", result.RequeueAfter)
-			return result, nil
-		}
-	}
-
-	return ctrl.Result{}, nil
-}
-
-// handleRestart implements the full restart logic with precedence.
-func (r *LifecycleReconciler) handleRestart(ctx context.Context, obj *unstructured.Unstructured, isDryRun bool, logger logr.Logger) (ctrl.Result, error) {
-	if !supportsRestart(obj) {
-		logger.Info("Skipping restart for an unsupported resource kind", "gvk", obj.GroupVersionKind())
-		r.Recorder.Event(obj, "Warning", "UnsupportedRestartKind", "Restart requires an apps Deployment, StatefulSet, or DaemonSet; no action taken")
-		return ctrl.Result{}, nil
-	}
-	if !hasRestartTemplate(obj) {
-		logger.Info("Skipping restart because the Pod template is missing", "resource", client.ObjectKeyFromObject(obj))
-		r.Recorder.Event(obj, "Warning", "NotPodSpawner", "Restart annotations are present but resource does not have a spec.template field.")
-		return ctrl.Result{}, nil
-	}
-
-	annotations := obj.GetAnnotations()
-	now := r.currentTime()
-
-	if restartAfterStr := annotations[RestartAfterAnnotation]; restartAfterStr != "" {
-		if annotations[ReferencePointAnnotation] == ReferencePointCreationTimestamp && annotations[RestartAtAnnotation] != "" {
-			logger.Info("Ignoring restart-after because restart-at is already set with creationTimestamp reference point")
-			if isDryRun {
-				logger.Info("[DRY-RUN] Would remove redundant restart-after annotation")
-				return ctrl.Result{}, nil
-			}
-			delete(annotations, RestartAfterAnnotation)
-			obj.SetAnnotations(annotations)
-			markManagedBy(obj)
-			if err := r.Update(ctx, obj); err != nil {
-				logger.Error(err, "failed to remove redundant restart-after annotation")
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{RequeueAfter: time.Nanosecond}, nil
-		}
-
-		duration, err := parseExtendedDuration(restartAfterStr)
-		if err != nil {
-			logger.Error(err, "invalid duration format for restart-after annotation", "value", restartAfterStr)
-			r.Recorder.Eventf(obj, "Warning", "InvalidAnnotation", "Invalid format for restart-after annotation: %v", err)
-			return ctrl.Result{}, nil
-		}
-		referenceTime := r.getReferenceTime(obj, logger)
-		restartTime := referenceTime.Add(duration)
-
-		if isDryRun {
-			logger.Info("[DRY-RUN] Would convert restart-after to restart-at without modifying the resource", "restartAfter", restartAfterStr, "calculatedRestartAt", restartTime.UTC().Format(time.RFC3339))
-			r.Recorder.Eventf(obj, "Normal", "DryRunRestart", "Dry-run: Resource would be scheduled for restart at %s.", restartTime.UTC().Format(time.RFC3339))
-			return ctrl.Result{}, nil
-		}
-
-		logger.Info("Converting restart-after to restart-at", "restartAfter", restartAfterStr, "calculatedRestartAt", restartTime.UTC().Format(time.RFC3339))
-		newAnnotations := obj.GetAnnotations()
-		if newAnnotations == nil {
-			newAnnotations = make(map[string]string)
-		}
-		newAnnotations[RestartAtAnnotation] = restartTime.UTC().Format(time.RFC3339)
-		delete(newAnnotations, RestartAfterAnnotation)
-		obj.SetAnnotations(newAnnotations)
-		markManagedBy(obj)
-		if err := r.Update(ctx, obj); err != nil {
-			logger.Error(err, "failed to update object with restart-at annotation")
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: time.Nanosecond}, nil
-	}
-
-	if restartAtStr := annotations[RestartAtAnnotation]; restartAtStr != "" {
-		restartTime, err := time.Parse(time.RFC3339, restartAtStr)
-		if err != nil {
-			logger.Error(err, "invalid format for restart-at annotation", "value", restartAtStr)
-			r.Recorder.Eventf(obj, "Warning", "InvalidAnnotation", "Invalid format for restart-at annotation: %v", err)
-			return ctrl.Result{}, nil
-		}
-		if !now.Before(restartTime) {
-			logger.Info("Triggering one-time restart based on restart-at annotation", "restartTime", restartTime)
-			if err := r.triggerRestart(ctx, obj, isDryRun, func(annotations map[string]string) {
-				delete(annotations, RestartAtAnnotation)
-			}, logger); err != nil {
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{}, nil
-		} else {
-			result := r.requeueForNextOccurrence(restartTime)
-			logger.Info("One-time restart scheduled for a future time", "requeueAfter", result.RequeueAfter)
-			return result, nil
-		}
-	}
-
-	if cronStr := annotations[RestartCronAnnotation]; cronStr != "" {
-		cronTimezone := annotations[CronTimezoneAnnotation]
-		if cronTimezone == "" {
-			cronTimezone = "UTC"
-		}
-		if _, err := time.LoadLocation(cronTimezone); err != nil {
-			logger.Error(err, "invalid cron timezone", "timezone", cronTimezone)
-			r.Recorder.Eventf(obj, "Warning", "InvalidTimezone", "Invalid timezone '%s' for restart-cron, taking no action.", cronTimezone)
-			return ctrl.Result{}, nil
-		}
-
-		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-		schedule, err := parser.Parse(fmt.Sprintf("CRON_TZ=%s %s", cronTimezone, cronStr))
-		if err != nil {
-			logger.Error(err, "invalid cron expression", "cron", cronStr)
-			r.Recorder.Eventf(obj, "Warning", "InvalidAnnotation", "Invalid cron expression for restart-cron: %v", err)
-			return ctrl.Result{}, nil
-		}
-		if schedule.Next(r.currentTime()).IsZero() {
-			err := fmt.Errorf("cron expression has no future occurrence")
-			logger.Error(err, "invalid cron expression", "cron", cronStr)
-			r.Recorder.Eventf(obj, "Warning", "InvalidAnnotation", "Invalid cron expression for restart-cron: %v", err)
-			return ctrl.Result{}, nil
-		}
-		return r.reconcileRecurringRestart(ctx, obj, isDryRun, "cron", cronRecurringSchedule{Schedule: schedule}, logger)
-	}
-
-	if everyStr := annotations[RestartEveryAnnotation]; everyStr != "" {
-		duration, err := parseRestartEvery(everyStr)
-		if err != nil {
-			logger.Error(err, "invalid duration for restart-every", "duration", everyStr)
-			r.Recorder.Eventf(obj, "Warning", "InvalidAnnotation", "Invalid duration for restart-every: %v", err)
-			return ctrl.Result{}, nil
-		}
-		return r.reconcileRecurringRestart(ctx, obj, isDryRun, "interval", intervalRecurringSchedule{duration: duration}, logger)
-	}
-
-	return ctrl.Result{}, nil
-}
-
-// reconcileRecurringRestart handles the stateful logic for both cron and interval restarts.
-func (r *LifecycleReconciler) reconcileRecurringRestart(ctx context.Context, obj *unstructured.Unstructured, isDryRun bool, scheduleType string, schedule recurringSchedule, logger logr.Logger) (ctrl.Result, error) {
-	annotations := obj.GetAnnotations()
-	now := r.currentTime()
-	lastRestartStr := annotations[LastRestartTimestamp]
-
-	if lastRestartStr == "" {
-		logger.Info("Initializing schedule by setting last-restart-timestamp", "type", scheduleType)
-		if isDryRun {
-			logger.Info("[DRY-RUN] Would initialize recurring restart state without modifying the resource", "type", scheduleType, "annotation", LastRestartTimestamp, "value", now.UTC().Format(time.RFC3339))
-			return ctrl.Result{}, nil
-		}
-		annotations[LastRestartTimestamp] = now.UTC().Format(time.RFC3339Nano)
-		obj.SetAnnotations(annotations)
-		markManagedBy(obj)
-		if err := r.Update(ctx, obj); err != nil {
-			logger.Error(err, "failed to initialize last-restart-timestamp")
-			return ctrl.Result{}, err
-		}
-		return r.requeueForNextOccurrence(schedule.Next(now)), nil
-	}
-
-	lastRestartTime, err := time.Parse(time.RFC3339, lastRestartStr)
-	if err != nil {
-		logger.Error(err, "failed to parse last-restart-timestamp", "value", lastRestartStr)
-		r.Recorder.Eventf(obj, "Warning", "InvalidState", "Could not parse last-restart-timestamp: %v", err)
-		return ctrl.Result{}, nil
-	}
-
-	nextScheduledRestart, coalescedAnchor, restartDue := planRecurringRestart(schedule, lastRestartTime, now)
-
-	if restartDue {
-		logger.Info("Triggering recurring restart", "type", scheduleType, "scheduledAt", nextScheduledRestart)
-		if err := r.triggerRestart(ctx, obj, isDryRun, func(annotations map[string]string) {
-			annotations[LastRestartTimestamp] = coalescedAnchor.UTC().Format(time.RFC3339Nano)
-		}, logger); err != nil {
-			return ctrl.Result{}, err
-		}
-		if isDryRun {
-			return ctrl.Result{}, nil
-		}
-		return r.requeueForNextOccurrence(schedule.Next(coalescedAnchor)), nil
-	} else {
-		result := r.requeueForNextOccurrence(nextScheduledRestart)
-		logger.Info("Next recurring restart is scheduled", "type", scheduleType, "at", nextScheduledRestart, "requeueAfter", result.RequeueAfter)
-		return result, nil
-	}
 }
