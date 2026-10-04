@@ -82,6 +82,7 @@ var _ = Describe("Lifecycle Controller E2E", Ordered, func() {
 	})
 
 	lifecycleActionTests(namespaces)
+	catchUpTests(namespaces)
 
 	Context("Recurring and Advanced Actions", func() {
 		var testNamespace string

@@ -54,6 +54,11 @@ func lifecycleConfigurationChanged(e event.UpdateEvent) bool {
 	if oldAnnotations[DryRunAnnotation] != newAnnotations[DryRunAnnotation] {
 		return true
 	}
+	oldCatchUp, oldFound := oldAnnotations[CatchUpAnnotation]
+	newCatchUp, newFound := newAnnotations[CatchUpAnnotation]
+	if oldCatchUp != newCatchUp || oldFound != newFound {
+		return true
+	}
 	if oldAnnotations[ReferencePointAnnotation] != newAnnotations[ReferencePointAnnotation] &&
 		(hasRelativeAction(oldAnnotations) || hasRelativeAction(newAnnotations)) {
 		return true

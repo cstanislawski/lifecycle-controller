@@ -56,6 +56,14 @@ controllerManager:
   # Enable global dry-run mode (logs actions without executing them)
   dryRun: false
 
+  # Default policy for missed actions: always. Also accepts never or a positive duration.
+  # The lifecycle.cezary.dev/catch-up annotation overrides these defaults.
+  actionTiming:
+    restart:
+      catchUp: "always"
+    delete:
+      catchUp: "always"
+
   # Log level for the controller (debug, info, error)
   logLevel: info
 
