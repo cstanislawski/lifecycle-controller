@@ -61,3 +61,25 @@ Create the name of the service account to use
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{/*
+Extract a numeric container port from a listener address.
+*/}}
+{{- define "lifecycle-controller.bindPort" -}}
+{{- if not (kindIs "string" .address) -}}
+{{- fail (printf "%s must be a string" .key) -}}
+{{- end -}}
+{{- if not (regexMatch `^(\[[^\[\][:space:]]+\]|[^:\[\][:space:]]*):[0-9]+$` .address) -}}
+{{- fail (printf "%s must use :port, host:port, or [IPv6]:port with a numeric port" .key) -}}
+{{- end -}}
+{{- $digits := regexFind `[0-9]+$` .address -}}
+{{- $digits = regexReplaceAll `^0+` $digits "" -}}
+{{- if gt (len $digits) 5 -}}
+{{- fail (printf "%s port must be between 1 and 65535" .key) -}}
+{{- end -}}
+{{- $port := int $digits -}}
+{{- if or (lt $port 1) (gt $port 65535) -}}
+{{- fail (printf "%s port must be between 1 and 65535" .key) -}}
+{{- end -}}
+{{- $port -}}
+{{- end -}}

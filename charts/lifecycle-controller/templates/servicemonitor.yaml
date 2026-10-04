@@ -13,10 +13,14 @@ spec:
   endpoints:
     - path: /metrics
       port: https
+      {{- if .Values.metrics.secure }}
       scheme: https
       bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
       tlsConfig:
         insecureSkipVerify: {{ .Values.metrics.serviceMonitor.insecureSkipVerify }}
+      {{- else }}
+      scheme: http
+      {{- end }}
   namespaceSelector:
     matchNames:
       - {{ .Release.Namespace }}
