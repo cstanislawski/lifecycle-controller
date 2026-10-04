@@ -160,7 +160,7 @@ func TestRestartCronRejectsScheduleWithoutFutureOccurrence(t *testing.T) {
 }
 
 func TestElapsedNextOccurrenceRequeuesImmediately(t *testing.T) {
-	result := requeueForNextOccurrence(time.Now().Add(-time.Second))
+	result := (&LifecycleReconciler{}).requeueForNextOccurrence(time.Now().Add(-time.Second))
 	if result.RequeueAfter != time.Nanosecond {
 		t.Fatalf("result = %+v, want immediate requeue for elapsed occurrence", result)
 	}

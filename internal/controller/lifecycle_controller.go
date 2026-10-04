@@ -101,17 +101,6 @@ func planRecurringRestart(schedule recurringSchedule, lastRestart, now time.Time
 	return scheduledAt, schedule.coalescedAnchor(lastRestart, now), true
 }
 
-func requeueForNextOccurrence(next time.Time) ctrl.Result {
-	if next.IsZero() {
-		return ctrl.Result{}
-	}
-	requeueAfter := time.Until(next)
-	if requeueAfter <= 0 {
-		requeueAfter = time.Nanosecond
-	}
-	return ctrl.Result{RequeueAfter: requeueAfter}
-}
-
 // LifecycleReconciler reconciles objects with lifecycle annotations.
 type LifecycleReconciler struct {
 	client.Client
@@ -121,6 +110,7 @@ type LifecycleReconciler struct {
 	GlobalDryRun bool
 	discovery    preferredResourceDiscovery
 	coverage     *coverageState
+	now          func() time.Time
 }
 
 // +kubebuilder:rbac:groups=*,resources=*,verbs=get;list;watch;delete;update;patch
@@ -143,11 +133,11 @@ func (r *LifecycleReconciler) getReferenceTime(obj client.Object, logger logr.Lo
 		} else {
 			logger.Info("Using 'applyTimestamp' (reconciliation time) as reference point")
 		}
-		return time.Now().UTC()
+		return r.currentTime().UTC()
 	default:
 		logger.Info("Invalid reference-point specified, falling back to 'applyTimestamp'", "value", referencePoint)
 		r.Recorder.Eventf(obj, "Warning", "InvalidAnnotationValue", "Invalid value for %s: '%s', falling back to 'applyTimestamp'", ReferencePointAnnotation, referencePoint)
-		return time.Now().UTC()
+		return r.currentTime().UTC()
 	}
 }
 
@@ -298,7 +288,7 @@ func (r *LifecycleReconciler) handleDeletion(ctx context.Context, obj *unstructu
 			return ctrl.Result{}, nil
 		}
 
-		if time.Now().After(deleteAtTime) {
+		if !r.currentTime().Before(deleteAtTime) {
 			logger.Info("Deleting resource based on delete-at annotation", "targetTime", deleteAtTime.String())
 			if !isDryRun {
 				uid := obj.GetUID()
@@ -318,9 +308,9 @@ func (r *LifecycleReconciler) handleDeletion(ctx context.Context, obj *unstructu
 			}
 			return ctrl.Result{}, nil
 		} else {
-			requeueAfter := time.Until(deleteAtTime)
-			logger.Info("Resource deletion scheduled for a future time", "requeueAfter", requeueAfter)
-			return ctrl.Result{RequeueAfter: requeueAfter}, nil
+			result := r.requeueForNextOccurrence(deleteAtTime)
+			logger.Info("Resource deletion scheduled for a future time", "requeueAfter", result.RequeueAfter)
+			return result, nil
 		}
 	}
 
@@ -329,15 +319,19 @@ func (r *LifecycleReconciler) handleDeletion(ctx context.Context, obj *unstructu
 
 // handleRestart implements the full restart logic with precedence.
 func (r *LifecycleReconciler) handleRestart(ctx context.Context, obj *unstructured.Unstructured, isDryRun bool, logger logr.Logger) (ctrl.Result, error) {
-	_, found, err := unstructured.NestedFieldNoCopy(obj.Object, "spec", "template")
-	if err != nil || !found {
-		logger.Info("Resource is not a pod-spawner, skipping restart action.", "resource", client.ObjectKeyFromObject(obj))
+	if !supportsRestart(obj) {
+		logger.Info("Skipping restart for an unsupported resource kind", "gvk", obj.GroupVersionKind())
+		r.Recorder.Event(obj, "Warning", "UnsupportedRestartKind", "Restart requires an apps Deployment, StatefulSet, or DaemonSet; no action taken")
+		return ctrl.Result{}, nil
+	}
+	if !hasRestartTemplate(obj) {
+		logger.Info("Skipping restart because the Pod template is missing", "resource", client.ObjectKeyFromObject(obj))
 		r.Recorder.Event(obj, "Warning", "NotPodSpawner", "Restart annotations are present but resource does not have a spec.template field.")
 		return ctrl.Result{}, nil
 	}
 
 	annotations := obj.GetAnnotations()
-	now := time.Now()
+	now := r.currentTime()
 
 	if restartAfterStr := annotations[RestartAfterAnnotation]; restartAfterStr != "" {
 		if annotations[ReferencePointAnnotation] == ReferencePointCreationTimestamp && annotations[RestartAtAnnotation] != "" {
@@ -394,7 +388,7 @@ func (r *LifecycleReconciler) handleRestart(ctx context.Context, obj *unstructur
 			r.Recorder.Eventf(obj, "Warning", "InvalidAnnotation", "Invalid format for restart-at annotation: %v", err)
 			return ctrl.Result{}, nil
 		}
-		if now.After(restartTime) {
+		if !now.Before(restartTime) {
 			logger.Info("Triggering one-time restart based on restart-at annotation", "restartTime", restartTime)
 			if err := r.triggerRestart(ctx, obj, isDryRun, func(annotations map[string]string) {
 				delete(annotations, RestartAtAnnotation)
@@ -403,9 +397,9 @@ func (r *LifecycleReconciler) handleRestart(ctx context.Context, obj *unstructur
 			}
 			return ctrl.Result{}, nil
 		} else {
-			requeueAfter := time.Until(restartTime)
-			logger.Info("One-time restart scheduled for a future time", "requeueAfter", requeueAfter)
-			return ctrl.Result{RequeueAfter: requeueAfter}, nil
+			result := r.requeueForNextOccurrence(restartTime)
+			logger.Info("One-time restart scheduled for a future time", "requeueAfter", result.RequeueAfter)
+			return result, nil
 		}
 	}
 
@@ -427,7 +421,7 @@ func (r *LifecycleReconciler) handleRestart(ctx context.Context, obj *unstructur
 			r.Recorder.Eventf(obj, "Warning", "InvalidAnnotation", "Invalid cron expression for restart-cron: %v", err)
 			return ctrl.Result{}, nil
 		}
-		if schedule.Next(time.Now()).IsZero() {
+		if schedule.Next(r.currentTime()).IsZero() {
 			err := fmt.Errorf("cron expression has no future occurrence")
 			logger.Error(err, "invalid cron expression", "cron", cronStr)
 			r.Recorder.Eventf(obj, "Warning", "InvalidAnnotation", "Invalid cron expression for restart-cron: %v", err)
@@ -452,7 +446,7 @@ func (r *LifecycleReconciler) handleRestart(ctx context.Context, obj *unstructur
 // reconcileRecurringRestart handles the stateful logic for both cron and interval restarts.
 func (r *LifecycleReconciler) reconcileRecurringRestart(ctx context.Context, obj *unstructured.Unstructured, isDryRun bool, scheduleType string, schedule recurringSchedule, logger logr.Logger) (ctrl.Result, error) {
 	annotations := obj.GetAnnotations()
-	now := time.Now()
+	now := r.currentTime()
 	lastRestartStr := annotations[LastRestartTimestamp]
 
 	if lastRestartStr == "" {
@@ -468,7 +462,7 @@ func (r *LifecycleReconciler) reconcileRecurringRestart(ctx context.Context, obj
 			logger.Error(err, "failed to initialize last-restart-timestamp")
 			return ctrl.Result{}, err
 		}
-		return requeueForNextOccurrence(schedule.Next(now)), nil
+		return r.requeueForNextOccurrence(schedule.Next(now)), nil
 	}
 
 	lastRestartTime, err := time.Parse(time.RFC3339, lastRestartStr)
@@ -490,61 +484,10 @@ func (r *LifecycleReconciler) reconcileRecurringRestart(ctx context.Context, obj
 		if isDryRun {
 			return ctrl.Result{}, nil
 		}
-		return requeueForNextOccurrence(schedule.Next(coalescedAnchor)), nil
+		return r.requeueForNextOccurrence(schedule.Next(coalescedAnchor)), nil
 	} else {
-		result := requeueForNextOccurrence(nextScheduledRestart)
+		result := r.requeueForNextOccurrence(nextScheduledRestart)
 		logger.Info("Next recurring restart is scheduled", "type", scheduleType, "at", nextScheduledRestart, "requeueAfter", result.RequeueAfter)
 		return result, nil
 	}
-}
-
-// triggerRestart applies the rollout marker and its acknowledgement in one patch.
-func (r *LifecycleReconciler) triggerRestart(ctx context.Context, obj *unstructured.Unstructured, isDryRun bool, acknowledge func(map[string]string), logger logr.Logger) error {
-	restartedAtTime := time.Now().UTC().Format(time.RFC3339)
-	logger.Info("Attempting to trigger restart", "restartedAt", restartedAtTime)
-
-	if isDryRun {
-		logger.Info("[DRY-RUN] Would trigger restart by setting template annotation", "annotation", RestartedAtTemplate, "value", restartedAtTime)
-		r.Recorder.Event(obj, "Normal", "DryRunRestart", "Dry-run: Resource would be restarted now.")
-		return nil
-	}
-
-	base := obj.DeepCopy()
-	annotations := obj.GetAnnotations()
-	if annotations == nil {
-		annotations = make(map[string]string)
-	}
-	acknowledge(annotations)
-	obj.SetAnnotations(annotations)
-	markManagedBy(obj)
-
-	templateAnnotations, found, err := unstructured.NestedStringMap(obj.Object, "spec", "template", "metadata", "annotations")
-	if err != nil {
-		logger.Error(err, "failed to get spec.template.metadata.annotations")
-		r.Recorder.Eventf(obj, "Warning", "RestartFailed", "Could not read pod template annotations: %v", err)
-		return err
-	}
-	if !found || templateAnnotations == nil {
-		templateAnnotations = make(map[string]string)
-	}
-
-	templateAnnotations[RestartedAtTemplate] = restartedAtTime
-	templateAnnotations[ManagedByAnnotation] = ManagedByValue
-	err = unstructured.SetNestedStringMap(obj.Object, templateAnnotations, "spec", "template", "metadata", "annotations")
-	if err != nil {
-		logger.Error(err, "failed to set restartedAt annotation on pod template")
-		r.Recorder.Eventf(obj, "Warning", "RestartFailed", "Could not set pod template annotations: %v", err)
-		return err
-	}
-
-	patch := client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})
-	if err := r.Patch(ctx, obj, patch); err != nil {
-		logger.Error(err, "failed to patch object to trigger restart")
-		r.Recorder.Eventf(obj, "Warning", "RestartFailed", "Could not patch object to trigger restart: %v", err)
-		return err
-	}
-
-	logger.Info("Successfully patched object to trigger restart")
-	r.Recorder.Event(obj, "Normal", "RestartTriggered", "Triggered a rolling restart of the resource.")
-	return nil
 }

@@ -27,6 +27,7 @@ func TestLifecyclePredicateFiltersWorkqueueEvents(t *testing.T) {
 		{name: "generic with lifecycle action", got: p.Generic(event.GenericEvent{Object: actionable}), want: false},
 		{name: "metadata update", got: p.Update(updateEvent(actionable, objectWithNameAndAnnotations("renamed", actionable.GetAnnotations()))), want: false},
 		{name: "spec update", got: p.Update(updateEvent(actionable, objectWithSpecAndAnnotations(map[string]interface{}{"replicas": int64(2)}, actionable.GetAnnotations()))), want: false},
+		{name: "template addition with restart action", got: p.Update(updateEvent(objectWithAnnotations(map[string]string{RestartAtAnnotation: "2030-01-01T00:00:00Z"}), objectWithSpecAndAnnotations(map[string]interface{}{"template": map[string]interface{}{}}, map[string]string{RestartAtAnnotation: "2030-01-01T00:00:00Z"}))), want: false},
 		{name: "unrelated annotation update", got: p.Update(updateEvent(actionable, objectWithAnnotations(map[string]string{DeleteAfterAnnotation: "1h", "example.com/note": "changed"}))), want: false},
 		{name: "action addition", got: p.Update(updateEvent(objectWithAnnotations(nil), actionable)), want: true},
 		{name: "action value update", got: p.Update(updateEvent(actionable, objectWithAnnotations(map[string]string{DeleteAfterAnnotation: "2h"}))), want: true},
@@ -36,7 +37,10 @@ func TestLifecyclePredicateFiltersWorkqueueEvents(t *testing.T) {
 		{name: "reference-point update with absolute action", got: p.Update(updateEvent(objectWithAnnotations(map[string]string{DeleteAtAnnotation: "2030-01-01T00:00:00Z"}), objectWithAnnotations(map[string]string{DeleteAtAnnotation: "2030-01-01T00:00:00Z", ReferencePointAnnotation: ReferencePointCreationTimestamp}))), want: false},
 		{name: "timezone update with cron action", got: p.Update(updateEvent(objectWithAnnotations(map[string]string{RestartCronAnnotation: "0 * * * *"}), objectWithAnnotations(map[string]string{RestartCronAnnotation: "0 * * * *", CronTimezoneAnnotation: "Europe/Warsaw"}))), want: true},
 		{name: "timezone update without cron action", got: p.Update(updateEvent(actionable, objectWithAnnotations(map[string]string{DeleteAfterAnnotation: "1h", CronTimezoneAnnotation: "Europe/Warsaw"}))), want: false},
-		{name: "internal last-restart update", got: p.Update(updateEvent(objectWithAnnotations(map[string]string{RestartEveryAnnotation: "1h"}), objectWithAnnotations(map[string]string{RestartEveryAnnotation: "1h", LastRestartTimestamp: "2030-01-01T00:00:00Z"}))), want: false},
+		{name: "recurring state initialization", got: p.Update(updateEvent(objectWithAnnotations(map[string]string{RestartEveryAnnotation: "1h"}), objectWithAnnotations(map[string]string{RestartEveryAnnotation: "1h", LastRestartTimestamp: "2030-01-01T00:00:00Z"}))), want: true},
+		{name: "cron state removal", got: p.Update(updateEvent(objectWithAnnotations(map[string]string{RestartCronAnnotation: "0 * * * *", LastRestartTimestamp: "invalid"}), objectWithAnnotations(map[string]string{RestartCronAnnotation: "0 * * * *"}))), want: true},
+		{name: "state update with one-time restart", got: p.Update(updateEvent(objectWithAnnotations(map[string]string{RestartAtAnnotation: "2030-01-01T00:00:00Z"}), objectWithAnnotations(map[string]string{RestartAtAnnotation: "2030-01-01T00:00:00Z", LastRestartTimestamp: "2030-01-01T00:00:00Z"}))), want: false},
+		{name: "state update with deletion", got: p.Update(updateEvent(actionable, objectWithAnnotations(map[string]string{DeleteAfterAnnotation: "1h", LastRestartTimestamp: "2030-01-01T00:00:00Z"}))), want: false},
 		{name: "internal managed-by update", got: p.Update(updateEvent(actionable, objectWithAnnotations(map[string]string{DeleteAfterAnnotation: "1h", ManagedByAnnotation: ManagedByValue}))), want: false},
 	}
 

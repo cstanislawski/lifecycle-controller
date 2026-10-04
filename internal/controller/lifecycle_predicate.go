@@ -16,8 +16,7 @@ var lifecycleActionAnnotations = []string{
 }
 
 // LifecyclePredicate limits the shared workqueue to lifecycle-relevant events.
-// Controller-owned state updates are intentionally excluded: reconcile results
-// drive the next pass without requiring the controller's own writes to enqueue it.
+// Restart state changes also enqueue pending actions.
 func LifecyclePredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
@@ -59,6 +58,10 @@ func lifecycleConfigurationChanged(e event.UpdateEvent) bool {
 		(hasRelativeAction(oldAnnotations) || hasRelativeAction(newAnnotations)) {
 		return true
 	}
+	if (hasRecurringRestart(oldAnnotations) || hasRecurringRestart(newAnnotations)) &&
+		oldAnnotations[LastRestartTimestamp] != newAnnotations[LastRestartTimestamp] {
+		return true
+	}
 	return oldAnnotations[CronTimezoneAnnotation] != newAnnotations[CronTimezoneAnnotation] &&
 		(oldAnnotations[RestartCronAnnotation] != "" || newAnnotations[RestartCronAnnotation] != "")
 }
@@ -78,4 +81,8 @@ func hasLifecycleAction(obj client.Object) bool {
 
 func hasRelativeAction(annotations map[string]string) bool {
 	return annotations[DeleteAfterAnnotation] != "" || annotations[RestartAfterAnnotation] != ""
+}
+
+func hasRecurringRestart(annotations map[string]string) bool {
+	return annotations[RestartCronAnnotation] != "" || annotations[RestartEveryAnnotation] != ""
 }
